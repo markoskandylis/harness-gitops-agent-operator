@@ -163,7 +163,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Namespace: req.Namespace,
 		},
 		StringData: map[string]string{
-			"token": resp.Credentials.PrivateKey, // Assuming the token is in the 'Cert' field
+			"token": resp.Credentials.PrivateKey, // Corrected from resp.Credentials.Cert
 		},
 	}
 
@@ -171,6 +171,14 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if !errors.IsAlreadyExists(err) {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Set owner reference for the Secret to ensure it's deleted with the agent CR
+	if err := ctrl.SetControllerReference(agentCR, newTokenSecret, r.Scheme); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.Update(ctx, newTokenSecret); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	agentCR.Status.AgentIdentifier = resp.Identifier
@@ -211,7 +219,7 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 func (r *HarnessGitopsAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&infrastructurev1.HarnessGitopsAgent{}).
-		Owns(&corev1.Secret{}).
+		Owns(&corev1.Secret{}). // Added to watch and own Secrets
 		Named("harnessgitopsagent").
 		Complete(r)
 }
