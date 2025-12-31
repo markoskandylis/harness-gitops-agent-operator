@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- infrastructure_v1_harnessgitopsagent.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

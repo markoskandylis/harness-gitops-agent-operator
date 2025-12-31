@@ -1,0 +1,9 @@
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  labels:
+    app.kubernetes.io/name: harness-gitops-agent-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: harnessgitopsagent-sample
+spec:
+  # TODO(user): Add fields here
