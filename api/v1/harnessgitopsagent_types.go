@@ -30,6 +30,14 @@ type HarnessGitopsAgentSpec struct {
 	// +kubebuilder:validation:Required
 	Name string `json:"name"`
 
+	// Type of GitOps Operator ("ARGO", "FLAMINGO")
+	// +kubebuilder:validation:Required
+	Operator string `json:"operator,omitempty"`
+
+	// Identifier is the unique identifier of the Harness GitOps Agent
+	// +kubebuilder:validation:Required
+	Identifier string `json:"identifier,omitempty"`
+
 	// AccountId is the Harness Account Identifier
 	// +kubebuilder:validation:Required
 	AccountId string `json:"accountId"`
@@ -45,6 +53,10 @@ type HarnessGitopsAgentSpec struct {
 	// Type of agent (e.g., "KUBERNETES")
 	// +kubebuilder:default:="KUBERNETES"
 	Type string `json:"type,omitempty"`
+
+	// Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
+	// +kubebuilder:default:="PROJECT"
+	Scope string `json:"scope,omitempty"`
 
 	// ApiKeySecretRef is the name of the Secret containing the Harness API Key
 	// Key inside secret must be "api_key"

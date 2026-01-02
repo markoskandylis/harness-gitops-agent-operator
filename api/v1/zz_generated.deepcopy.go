@@ -30,7 +30,7 @@ func (in *HarnessGitopsAgent) DeepCopyInto(out *HarnessGitopsAgent) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	in.Spec.DeepCopyInto(&out.Spec)
+	out.Spec = in.Spec
 	in.Status.DeepCopyInto(&out.Status)
 }
 

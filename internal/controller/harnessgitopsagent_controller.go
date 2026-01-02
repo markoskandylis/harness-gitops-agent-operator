@@ -82,22 +82,21 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 						AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 						OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
 						ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+						Name:              optional.NewString(agentCR.Spec.Name),
+						Type_:             optional.NewString(agentCR.Spec.Type),
+						Scope:             optional.NewString(agentCR.Spec.Scope),
 					},
 				)
 				if err != nil {
-					// Check for 404 Not Found and ignore, as the agent might have been deleted manually
 					if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-						if swaggerErr.Code() != "NOT_FOUND" {
-							log.Error(err, "Failed to delete agent from Harness")
-							return ctrl.Result{}, err // Retry for other errors
-						}
+						log.Error(err, "Failed to delete agent from Harness",
+							"body", string(swaggerErr.Body()))
+						// Optionally parse body if you want structured fields.
 					} else {
 						log.Error(err, "Failed to delete agent from Harness")
-						return ctrl.Result{}, err
 					}
+					return ctrl.Result{}, err
 				}
-			} else {
-				log.Info("Could not connect to Harness (Secret missing?). Removing finalizer anyway.")
 			}
 
 			// C. Remove Finalizer
@@ -132,14 +131,20 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		// Do not requeue immediately, wait for secret to be created
 		return ctrl.Result{}, err
 	}
+
 	gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
+	gitopsAgentSclope := nextgen.V1AgentScope(agentCR.Spec.Scope)
+	gitopsOperator := nextgen.V1AgentOperator(agentCR.Spec.Operator)
 
 	createReq := &nextgen.V1Agent{
 		Name:              agentCR.Spec.Name,
+		Identifier:        agentCR.Spec.Identifier,
+		Operator:          &gitopsOperator,
 		AccountIdentifier: agentCR.Spec.AccountId,
 		OrgIdentifier:     agentCR.Spec.OrgId,
 		ProjectIdentifier: agentCR.Spec.ProjectId,
 		Type_:             &gitopsAgentType,
+		Scope:             &gitopsAgentSclope,
 		Metadata: &nextgen.V1AgentMetadata{
 			Namespace:        req.Namespace,
 			HighAvailability: false,
@@ -149,6 +154,9 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	resp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerCreate(harnessSession.AuthCtx, *createReq)
 	if err != nil {
 		log.Error(err, "Harness API Call Failed")
+		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+			log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
+		}
 		return ctrl.Result{}, err
 	}
 
@@ -202,7 +210,6 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 	}
 
 	cfg := nextgen.NewConfiguration()
-	cfg.BasePath = "https://app.harness.io/ng/api"
 	client := nextgen.NewAPIClient(cfg)
 
 	authCtx := context.WithValue(ctx, nextgen.ContextAPIKey, nextgen.APIKey{

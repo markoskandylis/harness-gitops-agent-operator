@@ -1,0 +1,16 @@
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  name: myagent
+  namespace: argocd-agent
+spec:
+  name: "myagentab"
+  identifier: "myagentab"
+  accountId: "PaWpk1biSb2DvH2qUZEcuQ"
+  orgId: "Platform_Team"
+  projectId: "kubeclustermanagement"
+  operator: "ARGO"
+  scope: "PROJECT"
+  type: "MANAGED_ARGO_PROVIDER"
+  apiKeySecretRef: "harness-api-key-secret"
+  tokenSecretRef: "my-agent-token"
