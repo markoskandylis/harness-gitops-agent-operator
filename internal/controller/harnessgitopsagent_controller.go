@@ -160,6 +160,14 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	log.Info("Registering new Harness GitOps Agent succeeded", "AgentID", resp.Identifier)
+	agentCR.Status.AgentIdentifier = resp.Identifier
+	if err := r.Status().Update(ctx, agentCR); err != nil {
+		return ctrl.Result{}, err
+	}
+	log.Info("Successfully registered new Harness GitOps Agent", "AgentID", resp.Identifier)
+
+	// 6. CREATE SECRET WITH AGENT TOKEN
 	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if tokenSecretName == "" {
 		tokenSecretName = agentCR.Name + "-agent-token"
@@ -186,11 +194,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 	if err := r.Update(ctx, newTokenSecret); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	agentCR.Status.AgentIdentifier = resp.Identifier
-	if err := r.Status().Update(ctx, agentCR); err != nil {
 		return ctrl.Result{}, err
 	}
 

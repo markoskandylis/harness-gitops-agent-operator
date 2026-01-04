@@ -1,11 +1,11 @@
 apiVersion: infrastructure.kandylis.co.uk/v1
 kind: HarnessGitopsAgent
 metadata:
-  name: myagent
+  name: hub-agent
   namespace: argocd-agent
 spec:
-  name: "myagentab"
-  identifier: "myagentab"
+  name: "hub-agent"
+  identifier: "hubagent"
   accountId: "PaWpk1biSb2DvH2qUZEcuQ"
   orgId: "Platform_Team"
   projectId: "kubeclustermanagement"
