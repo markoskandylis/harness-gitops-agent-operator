@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 
 	// 1. KUBERNETES IMPORTS
 	corev1 "k8s.io/api/core/v1"
@@ -178,9 +179,15 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Name:      tokenSecretName,
 			Namespace: req.Namespace,
 		},
-		StringData: map[string]string{
-			"token": resp.Credentials.PrivateKey, // Corrected from resp.Credentials.Cert
-		},
+	}
+
+	decodedToken, err := base64.StdEncoding.DecodeString(resp.Credentials.PrivateKey)
+	if err != nil {
+		log.Error(err, "Failed to decode base64 token from Harness API")
+		return ctrl.Result{}, err
+	}
+	newTokenSecret.Data = map[string][]byte{
+		"token": decodedToken,
 	}
 
 	if err := r.Create(ctx, newTokenSecret); err != nil {
