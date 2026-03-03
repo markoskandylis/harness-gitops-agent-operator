@@ -6,7 +6,7 @@
 *.dylib
 bin/*
 Dockerfile.cross
-
+Agent.MD
 # Test binary, built with `go test -c`
 *.test
 

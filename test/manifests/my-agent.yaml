@@ -6,9 +6,9 @@ metadata:
 spec:
   name: "hub-agent"
   identifier: "hubagent"
-  accountId: "PaWpk1biSb2DvH2qUZEcuQ"
-  orgId: "Platform_Team"
-  projectId: "kubeclustermanagement"
+  accountId: "qIYsos1ZQO6fJMG1Ip6KJA"
+  orgId: "Harness_Platform_Management"
+  projectId: "gitopshub"
   operator: "ARGO"
   scope: "PROJECT"
   type: "MANAGED_ARGO_PROVIDER"

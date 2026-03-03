@@ -1,0 +1,12 @@
+1. Build a local image from this repo root:
+   docker build -t {{ .Values.image.repository }}:{{ .Values.image.tag }} .
+
+2. Import it into your k3d cluster (example cluster name: hub):
+   k3d image import -c hub {{ .Values.image.repository }}:{{ .Values.image.tag }}
+
+3. Upgrade/install this chart:
+   helm upgrade --install {{ .Release.Name }} {{ .Chart.Name }} \
+     --namespace {{ .Release.Namespace }} --create-namespace
+
+4. Check controller logs:
+   kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "harness-gitops-agent-controller.fullname" . }} -f

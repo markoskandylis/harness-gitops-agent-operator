@@ -1,0 +1,59 @@
+nameOverride: ""
+fullnameOverride: ""
+
+crd:
+  create: false
+
+replicaCount: 1
+
+image:
+  repository: harness-gitops-agent-operator
+  tag: dev
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+leaderElection:
+  enabled: true
+
+manager:
+  # Keep metrics disabled by default for local testing.
+  metricsBindAddress: "0"
+  healthProbeBindAddress: ":8081"
+  extraArgs: []
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+env: []

@@ -18,7 +18,8 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
+	"fmt"
+	"strings"
 
 	// 1. KUBERNETES IMPORTS
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +41,8 @@ import (
 )
 
 const harnessAgentFinalizer = "infrastructure.kandylis.co.uk/finalizer"
+
+const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
 
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
@@ -75,20 +78,37 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			log.Info("Deleting agent from Harness Platform...")
 
 			harnessSession, err := r.getHarnessClient(ctx, agentCR)
-			if err == nil {
-				_, _, err = harnessSession.Client.AgentApi.AgentServiceForServerDelete(
-					harnessSession.AuthCtx,
-					agentCR.Status.AgentIdentifier,
-					&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
-						AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-						OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-						ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
-						Name:              optional.NewString(agentCR.Spec.Name),
-						Type_:             optional.NewString(agentCR.Spec.Type),
-						Scope:             optional.NewString(agentCR.Spec.Scope),
-					},
-				)
-				if err != nil {
+			if err != nil {
+				// Keep finalizer until cleanup in Harness succeeds.
+				log.Error(err, "Failed to initialize Harness session for delete; retaining finalizer")
+				return ctrl.Result{}, err
+			}
+
+			agentIdentifier := agentCR.Status.AgentIdentifier
+			if agentIdentifier == "" {
+				// Fallback handles cases where status was never written.
+				agentIdentifier = agentCR.Spec.Identifier
+			}
+			if agentIdentifier == "" {
+				return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
+			}
+
+			_, _, err = harnessSession.Client.AgentApi.AgentServiceForServerDelete(
+				harnessSession.AuthCtx,
+				agentIdentifier,
+				&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
+					AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
+					OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
+					ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+					Name:              optional.NewString(agentCR.Spec.Name),
+					Type_:             optional.NewString(agentCR.Spec.Type),
+					Scope:             optional.NewString(agentCR.Spec.Scope),
+				},
+			)
+			if err != nil {
+				if isHarnessAgentNotFound(err) {
+					log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
+				} else {
 					if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
 						log.Error(err, "Failed to delete agent from Harness",
 							"body", string(swaggerErr.Body()))
@@ -174,37 +194,97 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		tokenSecretName = agentCR.Name + "-agent-token"
 	}
 
-	newTokenSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tokenSecretName,
-			Namespace: req.Namespace,
-		},
-	}
-
-	decodedToken, err := base64.StdEncoding.DecodeString(resp.Credentials.PrivateKey)
+	agentToken, err := r.resolveAgentToken(harnessSession, agentCR, resp.Identifier, resp.Credentials)
 	if err != nil {
-		log.Error(err, "Failed to decode base64 token from Harness API")
+		log.Error(err, "Failed to resolve agent token from Harness")
 		return ctrl.Result{}, err
 	}
-	newTokenSecret.Data = map[string][]byte{
-		"token": decodedToken,
-	}
 
-	if err := r.Create(ctx, newTokenSecret); err != nil {
-		if !errors.IsAlreadyExists(err) {
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Set owner reference for the Secret to ensure it's deleted with the agent CR
-	if err := ctrl.SetControllerReference(agentCR, newTokenSecret, r.Scheme); err != nil {
-		return ctrl.Result{}, err
-	}
-	if err := r.Update(ctx, newTokenSecret); err != nil {
+	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken); err != nil {
+		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *HarnessGitopsAgentReconciler) resolveAgentToken(
+	harnessSession *HarnessSession,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentIdentifier string,
+	credentials *nextgen.V1AgentCredentials,
+) (string, error) {
+	if credentials != nil && credentials.PrivateKey != "" {
+		return credentials.PrivateKey, nil
+	}
+
+	getResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerGet(
+		harnessSession.AuthCtx,
+		agentIdentifier,
+		agentCR.Spec.AccountId,
+		&nextgen.AgentsApiAgentServiceForServerGetOpts{
+			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
+			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			Scope:             optional.NewString(agentCR.Spec.Scope),
+			WithCredentials:   optional.NewBool(true),
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	if getResp.Credentials != nil && getResp.Credentials.PrivateKey != "" {
+		return getResp.Credentials.PrivateKey, nil
+	}
+
+	regenResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerRegenerateCredentials(
+		harnessSession.AuthCtx,
+		agentIdentifier,
+	)
+	if err != nil {
+		return "", err
+	}
+	if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
+		return "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
+	}
+
+	return regenResp.Credentials.PrivateKey, nil
+}
+
+func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	secretName string,
+	agentToken string,
+) error {
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: agentCR.Namespace,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tokenSecret, func() error {
+		if err := ctrl.SetControllerReference(agentCR, tokenSecret, r.Scheme); err != nil {
+			return err
+		}
+		tokenSecret.Type = corev1.SecretTypeOpaque
+		if tokenSecret.Data == nil {
+			tokenSecret.Data = map[string][]byte{}
+		}
+		// Harness gitops-helm consumes GITOPS_AGENT_TOKEN from envFrom(secretRef).
+		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
+		return nil
+	})
+	return err
+}
+
+func isHarnessAgentNotFound(err error) bool {
+	swaggerErr, ok := err.(nextgen.GenericSwaggerError)
+	if !ok {
+		return false
+	}
+	body := strings.ToLower(string(swaggerErr.Body()))
+	return strings.Contains(body, "agent not found")
 }
 
 func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent) (*HarnessSession, error) {

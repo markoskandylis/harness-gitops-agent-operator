@@ -51,7 +51,18 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: infrastructurev1.HarnessGitopsAgentSpec{
+						Name:            "test-agent",
+						Identifier:      "test-agent",
+						Operator:        "ARGO",
+						AccountId:       "account",
+						OrgId:           "org",
+						ProjectId:       "project",
+						Scope:           "PROJECT",
+						Type:            "MANAGED_ARGO_PROVIDER",
+						ApiKeySecretRef: "missing-secret",
+						TokenSecretRef:  "test-agent-token",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -66,7 +77,7 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 			By("Cleanup the specific resource instance HarnessGitopsAgent")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-		It("should successfully reconcile the resource", func() {
+		It("should return an error when API key secret is missing", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &HarnessGitopsAgentReconciler{
 				Client: k8sClient,
@@ -77,8 +88,13 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			// First reconcile adds the finalizer and requeues. Second reconcile executes create path.
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not found"))
 		})
 	})
 })
