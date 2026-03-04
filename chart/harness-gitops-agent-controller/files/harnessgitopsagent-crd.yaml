@@ -14,7 +14,17 @@ spec:
     singular: harnessgitopsagent
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .status.agentIdentifier
+      name: Agent
+      type: string
+    - jsonPath: .status.clusterIdentifier
+      name: Cluster
+      type: string
+    - jsonPath: .status.argoProjectId
+      name: ArgoProject
+      type: string
+    name: v1
     schema:
       openAPIV3Schema:
         description: HarnessGitopsAgent is the Schema for the harnessgitopsagents
@@ -45,9 +55,56 @@ spec:
                 type: string
               apiKeySecretRef:
                 description: |-
-                  ApiKeySecretRef is the name of the Secret containing the Harness API Key
-                  Key inside secret must be "api_key"
+                  ApiKeySecretRef is the name of the Secret containing the Harness API Key.
+                  Key inside secret must be "api_key".
                 type: string
+              clusterRegistration:
+                description: |-
+                  ClusterRegistration controls whether the controller registers a cluster with
+                  Harness after agent creation. This is required to trigger AppProject creation,
+                  which makes the agent and its Applications visible in the Harness UI.
+                properties:
+                  connectionType:
+                    default: IN_CLUSTER
+                    description: |-
+                      ConnectionType determines the authentication method.
+                        IN_CLUSTER      — agent runs inside the cluster being registered (default).
+                                          Uses https://kubernetes.default.svc, no credentials needed.
+                        SERVICE_ACCOUNT — remote cluster; requires CredentialsRef with bearerToken + caData.
+                    enum:
+                    - IN_CLUSTER
+                    - SERVICE_ACCOUNT
+                    type: string
+                  credentialsRef:
+                    description: |-
+                      CredentialsRef is the name of a Secret in the same namespace containing
+                      credentials for SERVICE_ACCOUNT connection type.
+                      Supported keys:
+                        bearerToken — Kubernetes service account token (required for SERVICE_ACCOUNT)
+                        caData      — base64-encoded PEM CA certificate bundle
+                        insecure    — "true" to skip TLS verification (local/dev only)
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled controls whether the controller registers a cluster after agent creation.
+                      Defaults to false. Set to true to trigger AppProject creation automatically.
+                    type: boolean
+                  name:
+                    description: |-
+                      Name is the display name for this cluster in Harness.
+                      Defaults to the HarnessGitopsAgent CR name if not set.
+                    type: string
+                  server:
+                    default: https://kubernetes.default.svc
+                    description: |-
+                      Server is the Kubernetes API server URL to register.
+                      Defaults to "https://kubernetes.default.svc" (in-cluster).
+                      For remote clusters use the external API server URL.
+                    type: string
+                required:
+                - enabled
+                type: object
               identifier:
                 description: Identifier is the unique identifier of the Harness GitOps
                   Agent
@@ -69,12 +126,13 @@ spec:
                 description: Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
                 type: string
               tokenSecretRef:
-                description: TokenSecretRef is the name of the Secret where the generated
-                  Agent Token will be stored
+                description: |-
+                  TokenSecretRef is the name of the Secret where the generated Agent Token will be stored.
+                  The controller writes GITOPS_AGENT_TOKEN and ARGO_PROJECT_ID into this secret.
                 type: string
               type:
                 default: KUBERNETES
-                description: Type of agent (e.g., "KUBERNETES")
+                description: Type of agent (e.g., "MANAGED_ARGO_PROVIDER")
                 type: string
             required:
             - accountId
@@ -90,10 +148,22 @@ spec:
             description: status defines the observed state of HarnessGitopsAgent
             properties:
               agentIdentifier:
-                description: AgentIdentifier is the ID returned by Harness after registration
+                description: AgentIdentifier is the ID returned by Harness after agent
+                  registration.
+                type: string
+              argoProjectId:
+                description: |-
+                  ArgoProjectId is the ArgoCD AppProject name (random 8-char ID) that Harness
+                  creates and maps to this agent's Harness project after cluster registration.
+                  Used as the `project:` field in ApplicationSets and Applications.
+                type: string
+              clusterIdentifier:
+                description: |-
+                  ClusterIdentifier is the Harness identifier of the cluster registered via
+                  ClusterRegistration. Populated after successful cluster registration.
                 type: string
               conditions:
-                description: Conditions store the detailed state transitions
+                description: Conditions store the detailed state transitions.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

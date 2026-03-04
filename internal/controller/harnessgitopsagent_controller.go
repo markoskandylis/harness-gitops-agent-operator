@@ -113,7 +113,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 					if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
 						log.Error(err, "Failed to delete agent from Harness",
 							"body", string(swaggerErr.Body()))
-						// Optionally parse body if you want structured fields.
 					} else {
 						log.Error(err, "Failed to delete agent from Harness")
 					}
@@ -139,84 +138,206 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// 4. CHECK IF REGISTERED (Idempotency)
-	if agentCR.Status.AgentIdentifier != "" && agentCR.Status.ArgoProjectId != "" {
+	// 4. CHECK IF FULLY RECONCILED (Idempotency)
+	// Cluster registration is required only when spec.clusterRegistration.enabled is true.
+	clusterRegEnabled := agentCR.Spec.ClusterRegistration != nil && agentCR.Spec.ClusterRegistration.Enabled
+	agentDone := agentCR.Status.AgentIdentifier != ""
+	clusterDone := !clusterRegEnabled || agentCR.Status.ClusterIdentifier != ""
+	argoProjectDone := agentCR.Status.ArgoProjectId != ""
+
+	if agentDone && clusterDone && argoProjectDone {
 		return ctrl.Result{}, nil
 	}
 
 	// 5. REGISTER NEW AGENT (Create Logic)
-	log.Info("Registering new Harness GitOps Agent...", "Name", agentCR.Spec.Name)
-
 	harnessSession, err := r.getHarnessClient(ctx, agentCR)
 	if err != nil {
 		log.Error(err, "Failed to initialize Harness Session")
-		// Do not requeue immediately, wait for secret to be created
 		return ctrl.Result{}, err
 	}
 
-	gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
-	gitopsAgentSclope := nextgen.V1AgentScope(agentCR.Spec.Scope)
-	gitopsOperator := nextgen.V1AgentOperator(agentCR.Spec.Operator)
+	agentIdentifier := agentCR.Status.AgentIdentifier
+	var agentCredentials *nextgen.V1AgentCredentials
 
-	createReq := &nextgen.V1Agent{
-		Name:              agentCR.Spec.Name,
-		Identifier:        agentCR.Spec.Identifier,
-		Operator:          &gitopsOperator,
-		AccountIdentifier: agentCR.Spec.AccountId,
-		OrgIdentifier:     agentCR.Spec.OrgId,
-		ProjectIdentifier: agentCR.Spec.ProjectId,
-		Type_:             &gitopsAgentType,
-		Scope:             &gitopsAgentSclope,
-		Metadata: &nextgen.V1AgentMetadata{
-			Namespace:        req.Namespace,
-			HighAvailability: false,
-		},
-	}
+	if agentIdentifier == "" {
+		log.Info("Registering new Harness GitOps Agent...", "Name", agentCR.Spec.Name)
 
-	resp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerCreate(harnessSession.AuthCtx, *createReq)
-	if err != nil {
-		log.Error(err, "Harness API Call Failed")
-		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-			log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
+		gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
+		gitopsAgentScope := nextgen.V1AgentScope(agentCR.Spec.Scope)
+		gitopsOperator := nextgen.V1AgentOperator(agentCR.Spec.Operator)
+
+		createReq := &nextgen.V1Agent{
+			Name:              agentCR.Spec.Name,
+			Identifier:        agentCR.Spec.Identifier,
+			Operator:          &gitopsOperator,
+			AccountIdentifier: agentCR.Spec.AccountId,
+			OrgIdentifier:     agentCR.Spec.OrgId,
+			ProjectIdentifier: agentCR.Spec.ProjectId,
+			Type_:             &gitopsAgentType,
+			Scope:             &gitopsAgentScope,
+			Metadata: &nextgen.V1AgentMetadata{
+				Namespace:        req.Namespace,
+				HighAvailability: false,
+			},
 		}
-		return ctrl.Result{}, err
+
+		resp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerCreate(harnessSession.AuthCtx, *createReq)
+		if err != nil {
+			log.Error(err, "Harness API Call Failed")
+			if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+				log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
+			}
+			return ctrl.Result{}, err
+		}
+
+		agentIdentifier = resp.Identifier
+		agentCredentials = resp.Credentials
+		log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
+
+		agentCR.Status.AgentIdentifier = agentIdentifier
+		if err := r.Status().Update(ctx, agentCR); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
-	log.Info("Registering new Harness GitOps Agent succeeded", "AgentID", resp.Identifier)
-	agentCR.Status.AgentIdentifier = resp.Identifier
-	if err := r.Status().Update(ctx, agentCR); err != nil {
-		return ctrl.Result{}, err
-	}
-	log.Info("Successfully registered new Harness GitOps Agent", "AgentID", resp.Identifier)
+	// 6. REGISTER CLUSTER (if enabled and not yet done)
+	if clusterRegEnabled && agentCR.Status.ClusterIdentifier == "" {
+		clusterIdentifier, err := r.registerCluster(ctx, harnessSession, agentCR, agentIdentifier)
+		if err != nil {
+			log.Error(err, "Failed to register cluster with Harness")
+			return ctrl.Result{}, err
+		}
+		log.Info("Registered cluster with Harness", "clusterIdentifier", clusterIdentifier)
 
-	// 6. RESOLVE AGENT TOKEN AND ARGO PROJECT ID
+		agentCR.Status.ClusterIdentifier = clusterIdentifier
+		if err := r.Status().Update(ctx, agentCR); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// 7. RESOLVE AGENT TOKEN AND ARGO PROJECT ID
 	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if tokenSecretName == "" {
 		tokenSecretName = agentCR.Name + "-agent-token"
 	}
 
-	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, resp.Identifier, resp.Credentials)
+	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
 	if err != nil {
 		log.Error(err, "Failed to resolve agent details from Harness")
 		return ctrl.Result{}, err
 	}
 
-	// 7. WRITE TOKEN SECRET (includes ARGO_PROJECT_ID alongside GITOPS_AGENT_TOKEN)
+	// 8. WRITE TOKEN SECRET (includes ARGO_PROJECT_ID alongside GITOPS_AGENT_TOKEN)
 	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
 		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
 		return ctrl.Result{}, err
 	}
 
-	// 8. PERSIST ARGO PROJECT ID IN STATUS
+	// 9. PERSIST ARGO PROJECT ID IN STATUS
+	// If cluster registration was just performed, ArgoProject may take a moment to appear.
+	// Requeue once to pick it up on the next reconcile loop.
 	if argoProjectId != "" {
 		agentCR.Status.ArgoProjectId = argoProjectId
 		if err := r.Status().Update(ctx, agentCR); err != nil {
 			return ctrl.Result{}, err
 		}
 		log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
+	} else if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
+		// Cluster was registered but AppProject not yet visible — requeue to retry.
+		log.Info("Cluster registered but ArgoProject not yet visible; requeueing")
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// registerCluster registers the cluster with Harness via the GitOps Clusters API.
+// It uses the IN_CLUSTER or SERVICE_ACCOUNT connection type from the spec.
+func (r *HarnessGitopsAgentReconciler) registerCluster(
+	ctx context.Context,
+	harnessSession *HarnessSession,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentIdentifier string,
+) (clusterIdentifier string, err error) {
+	log := logf.FromContext(ctx)
+	spec := agentCR.Spec.ClusterRegistration
+
+	server := spec.Server
+	if server == "" {
+		server = "https://kubernetes.default.svc"
+	}
+
+	clusterName := spec.Name
+	if clusterName == "" {
+		clusterName = agentCR.Name
+	}
+
+	connectionType := spec.ConnectionType
+	if connectionType == "" {
+		connectionType = "IN_CLUSTER"
+	}
+
+	clusterConfig := &nextgen.ClustersClusterConfig{
+		ClusterConnectionType: connectionType,
+	}
+
+	switch connectionType {
+	case "IN_CLUSTER":
+		clusterConfig.TlsClientConfig = &nextgen.ClustersTlsClientConfig{
+			Insecure: true,
+		}
+
+	case "SERVICE_ACCOUNT":
+		if spec.CredentialsRef == "" {
+			return "", fmt.Errorf("SERVICE_ACCOUNT connection type requires credentialsRef to be set")
+		}
+		credsSecret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{Name: spec.CredentialsRef, Namespace: agentCR.Namespace}, credsSecret); err != nil {
+			return "", fmt.Errorf("failed to read credentialsRef secret %q: %w", spec.CredentialsRef, err)
+		}
+		bearerToken := string(credsSecret.Data["bearerToken"])
+		caData := string(credsSecret.Data["caData"])
+		insecureStr := string(credsSecret.Data["insecure"])
+
+		clusterConfig.BearerToken = bearerToken
+		clusterConfig.TlsClientConfig = &nextgen.ClustersTlsClientConfig{
+			Insecure: strings.EqualFold(insecureStr, "true"),
+			CaData:   caData,
+		}
+
+	default:
+		return "", fmt.Errorf("unsupported connectionType %q; must be IN_CLUSTER or SERVICE_ACCOUNT", connectionType)
+	}
+
+	createReq := nextgen.ClustersClusterCreateRequest{
+		Upsert: true,
+		Cluster: &nextgen.ClustersCluster{
+			Server: server,
+			Name:   clusterName,
+			Config: clusterConfig,
+		},
+	}
+
+	log.Info("Registering cluster with Harness", "server", server, "connectionType", connectionType)
+
+	clusterResp, _, err := harnessSession.Client.ClustersApi.AgentClusterServiceCreate(
+		harnessSession.AuthCtx,
+		createReq,
+		agentIdentifier,
+		&nextgen.ClustersApiAgentClusterServiceCreateOpts{
+			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
+			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
+			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+		},
+	)
+	if err != nil {
+		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+			return "", fmt.Errorf("cluster registration failed: %w (body: %s)", err, string(swaggerErr.Body()))
+		}
+		return "", fmt.Errorf("cluster registration failed: %w", err)
+	}
+
+	return clusterResp.Identifier, nil
 }
 
 // resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN) and the
