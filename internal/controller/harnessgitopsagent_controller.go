@@ -201,28 +201,34 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 6. RESOLVE AGENT TOKEN (always do this before cluster registration so the
-	//    gitops-agent pod can start and connect to Harness, which is required
-	//    before cluster registration can succeed).
+	// 6. WRITE TOKEN SECRET (only on first creation to avoid invalidating the running agent).
+	//    The secret must exist before cluster registration so the gitops-agent pod can
+	//    start, connect to Harness, and be "seen" as connected.
 	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if tokenSecretName == "" {
 		tokenSecretName = agentCR.Name + "-agent-token"
 	}
 
-	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
-	if err != nil {
-		log.Error(err, "Failed to resolve agent details from Harness")
-		return ctrl.Result{}, err
+	// Check if the token secret already has a valid GITOPS_AGENT_TOKEN.
+	// If so, skip token resolution to prevent regenerating credentials and
+	// invalidating the currently-running gitops-agent pod.
+	tokenAlreadyWritten := r.tokenSecretExists(ctx, agentCR, tokenSecretName)
+
+	if !tokenAlreadyWritten {
+		// First time (or secret was deleted) — resolve and write the token.
+		agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
+		if err != nil {
+			log.Error(err, "Failed to resolve agent details from Harness")
+			return ctrl.Result{}, err
+		}
+		if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
+			log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
+			return ctrl.Result{}, err
+		}
+		log.Info("Wrote agent token secret", "secret", tokenSecretName)
 	}
 
-	// 7. WRITE TOKEN SECRET (must happen before cluster registration so the
-	//    gitops-agent gets the correct decoded PEM token and can connect).
-	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
-		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
-		return ctrl.Result{}, err
-	}
-
-	// 8. REGISTER CLUSTER (if enabled and not yet done)
+	// 7. REGISTER CLUSTER (if enabled and not yet done)
 	// Requires the gitops-agent pod to be running and connected to Harness.
 	if clusterRegEnabled && agentCR.Status.ClusterIdentifier == "" {
 		clusterIdentifier, err := r.registerCluster(ctx, harnessSession, agentCR, agentIdentifier)
@@ -236,35 +242,32 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := r.Status().Update(ctx, agentCR); err != nil {
 			return ctrl.Result{}, err
 		}
-
-		// Re-fetch ArgoProject ID — it is created by Harness after first cluster registration.
-		_, argoProjectId, err = r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, nil)
-		if err != nil {
-			log.Error(err, "Failed to re-fetch agent details after cluster registration")
-			return ctrl.Result{}, err
-		}
-		// Update secret with fresh ArgoProject ID if available.
-		if argoProjectId != "" {
-			if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
-				log.Error(err, "Failed to update token secret with ArgoProject ID", "secret", tokenSecretName)
-				return ctrl.Result{}, err
-			}
-		}
 	}
 
-	// 9. PERSIST ARGO PROJECT ID IN STATUS
-	// If cluster registration was just performed, ArgoProject may take a moment to appear.
-	// Requeue once to pick it up on the next reconcile loop.
-	if argoProjectId != "" {
-		agentCR.Status.ArgoProjectId = argoProjectId
-		if err := r.Status().Update(ctx, agentCR); err != nil {
+	// 9. FETCH AND PERSIST ARGO PROJECT ID IN STATUS
+	// Only needed if not already done. Uses a read-only GET (no token regeneration).
+	if agentCR.Status.ArgoProjectId == "" {
+		argoProjectId, err := r.fetchArgoProjectId(harnessSession, agentCR, agentIdentifier)
+		if err != nil {
+			log.Error(err, "Failed to fetch ArgoProject ID from Harness")
 			return ctrl.Result{}, err
 		}
-		log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
-	} else if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
-		// Cluster was registered but AppProject not yet visible — requeue to retry.
-		log.Info("Cluster registered but ArgoProject not yet visible; requeueing")
-		return ctrl.Result{Requeue: true}, nil
+		if argoProjectId != "" {
+			agentCR.Status.ArgoProjectId = argoProjectId
+			if err := r.Status().Update(ctx, agentCR); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
+			// Update secret with ArgoProject ID so ApplicationSets can consume it.
+			if err := r.upsertArgoProjectIdInSecret(ctx, agentCR, tokenSecretName, argoProjectId); err != nil {
+				log.Error(err, "Failed to update secret with ArgoProject ID")
+				return ctrl.Result{}, err
+			}
+		} else if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
+			// Cluster was registered but AppProject not yet visible — requeue to retry.
+			log.Info("Cluster registered but ArgoProject not yet visible; requeueing")
+			return ctrl.Result{Requeue: true}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -498,6 +501,65 @@ func toHarnessIdentifier(s string) string {
 		b = append([]byte{'_'}, b...)
 	}
 	return string(b)
+}
+
+// tokenSecretExists returns true if Secret/<secretName> already has GITOPS_AGENT_TOKEN set.
+func (r *HarnessGitopsAgentReconciler) tokenSecretExists(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent, secretName string) bool {
+	existing := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace}, existing); err != nil {
+		return false
+	}
+	tok, ok := existing.Data[gitopsAgentTokenSecretKey]
+	return ok && len(tok) > 0
+}
+
+// fetchArgoProjectId performs a read-only GET on the agent to extract the mapped AppProject ID.
+// It never regenerates credentials so it is safe to call on every reconcile.
+func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
+	harnessSession *HarnessSession,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentIdentifier string,
+) (string, error) {
+	getResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerGet(
+		harnessSession.AuthCtx,
+		agentIdentifier,
+		agentCR.Spec.AccountId,
+		&nextgen.AgentsApiAgentServiceForServerGetOpts{
+			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
+			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			Scope:             optional.NewString(agentCR.Spec.Scope),
+			WithCredentials:   optional.NewBool(false),
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	if getResp.Metadata != nil &&
+		getResp.Metadata.MappedProjects != nil &&
+		len(getResp.Metadata.MappedProjects.AppProjMap) > 0 {
+		for projectId := range getResp.Metadata.MappedProjects.AppProjMap {
+			return projectId, nil
+		}
+	}
+	return "", nil
+}
+
+// upsertArgoProjectIdInSecret updates an existing token secret to add/update the ARGO_PROJECT_ID key.
+func (r *HarnessGitopsAgentReconciler) upsertArgoProjectIdInSecret(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	secretName string,
+	argoProjectId string,
+) error {
+	existing := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace}, existing); err != nil {
+		return err
+	}
+	if existing.Data == nil {
+		existing.Data = map[string][]byte{}
+	}
+	existing.Data[argoProjectIdSecretKey] = []byte(argoProjectId)
+	return r.Update(ctx, existing)
 }
 
 func isHarnessAgentNotFound(err error) bool {
