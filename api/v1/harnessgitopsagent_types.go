@@ -74,6 +74,11 @@ type HarnessGitopsAgentStatus struct {
 	// AgentIdentifier is the ID returned by Harness after registration
 	AgentIdentifier string `json:"agentIdentifier,omitempty"`
 
+	// ArgoProjectId is the ArgoCD AppProject name (random ID) that Harness maps
+	// to this agent's Harness project. Used as the `project:` field in
+	// ApplicationSets and Applications managed by this agent.
+	ArgoProjectId string `json:"argoProjectId,omitempty"`
+
 	// Conditions store the detailed state transitions
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }

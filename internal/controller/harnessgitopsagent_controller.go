@@ -43,6 +43,7 @@ import (
 const harnessAgentFinalizer = "infrastructure.kandylis.co.uk/finalizer"
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
+const argoProjectIdSecretKey = "ARGO_PROJECT_ID"
 
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
@@ -139,7 +140,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// 4. CHECK IF REGISTERED (Idempotency)
-	if agentCR.Status.AgentIdentifier != "" {
+	if agentCR.Status.AgentIdentifier != "" && agentCR.Status.ArgoProjectId != "" {
 		return ctrl.Result{}, nil
 	}
 
@@ -188,37 +189,52 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 	log.Info("Successfully registered new Harness GitOps Agent", "AgentID", resp.Identifier)
 
-	// 6. CREATE SECRET WITH AGENT TOKEN
+	// 6. RESOLVE AGENT TOKEN AND ARGO PROJECT ID
 	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if tokenSecretName == "" {
 		tokenSecretName = agentCR.Name + "-agent-token"
 	}
 
-	agentToken, err := r.resolveAgentToken(harnessSession, agentCR, resp.Identifier, resp.Credentials)
+	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, resp.Identifier, resp.Credentials)
 	if err != nil {
-		log.Error(err, "Failed to resolve agent token from Harness")
+		log.Error(err, "Failed to resolve agent details from Harness")
 		return ctrl.Result{}, err
 	}
 
-	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken); err != nil {
+	// 7. WRITE TOKEN SECRET (includes ARGO_PROJECT_ID alongside GITOPS_AGENT_TOKEN)
+	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
 		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
 		return ctrl.Result{}, err
+	}
+
+	// 8. PERSIST ARGO PROJECT ID IN STATUS
+	if argoProjectId != "" {
+		agentCR.Status.ArgoProjectId = argoProjectId
+		if err := r.Status().Update(ctx, agentCR); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *HarnessGitopsAgentReconciler) resolveAgentToken(
+// resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN) and the
+// ArgoCD AppProject ID (the key in metadata.mappedProjects.appProjMap) in a
+// single GET call, falling back to credential regeneration if needed.
+func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 	harnessSession *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	agentIdentifier string,
 	credentials *nextgen.V1AgentCredentials,
-) (string, error) {
+) (agentToken string, argoProjectId string, err error) {
+	// Fast path: creation response already carried the private key.
 	if credentials != nil && credentials.PrivateKey != "" {
-		return credentials.PrivateKey, nil
+		agentToken = credentials.PrivateKey
 	}
 
-	getResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerGet(
+	// Always GET the full agent record to pick up mappedProjects.
+	getResp, _, getErr := harnessSession.Client.AgentApi.AgentServiceForServerGet(
 		harnessSession.AuthCtx,
 		agentIdentifier,
 		agentCR.Spec.AccountId,
@@ -229,25 +245,41 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentToken(
 			WithCredentials:   optional.NewBool(true),
 		},
 	)
-	if err != nil {
-		return "", err
-	}
-	if getResp.Credentials != nil && getResp.Credentials.PrivateKey != "" {
-		return getResp.Credentials.PrivateKey, nil
+	if getErr != nil {
+		return "", "", getErr
 	}
 
-	regenResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerRegenerateCredentials(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-	)
-	if err != nil {
-		return "", err
-	}
-	if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
-		return "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
+	// Extract token from GET response if not already resolved.
+	if agentToken == "" && getResp.Credentials != nil && getResp.Credentials.PrivateKey != "" {
+		agentToken = getResp.Credentials.PrivateKey
 	}
 
-	return regenResp.Credentials.PrivateKey, nil
+	// Extract ArgoCD AppProject ID — it is the key of the appProjMap.
+	if getResp.Metadata != nil &&
+		getResp.Metadata.MappedProjects != nil &&
+		len(getResp.Metadata.MappedProjects.AppProjMap) > 0 {
+		for projectId := range getResp.Metadata.MappedProjects.AppProjMap {
+			argoProjectId = projectId
+			break
+		}
+	}
+
+	// Last resort: regenerate credentials if token still empty.
+	if agentToken == "" {
+		regenResp, _, regenErr := harnessSession.Client.AgentApi.AgentServiceForServerRegenerateCredentials(
+			harnessSession.AuthCtx,
+			agentIdentifier,
+		)
+		if regenErr != nil {
+			return "", "", regenErr
+		}
+		if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
+			return "", "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
+		}
+		agentToken = regenResp.Credentials.PrivateKey
+	}
+
+	return agentToken, argoProjectId, nil
 }
 
 func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
@@ -255,6 +287,7 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	secretName string,
 	agentToken string,
+	argoProjectId string,
 ) error {
 	tokenSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -271,8 +304,13 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 		if tokenSecret.Data == nil {
 			tokenSecret.Data = map[string][]byte{}
 		}
-		// Harness gitops-helm consumes GITOPS_AGENT_TOKEN from envFrom(secretRef).
+		// Consumed by gitops-helm via envFrom(secretRef).
 		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
+		// Consumed by ApplicationSet/Application `project:` field.
+		// Empty string is stored as-is; consumers should check before use.
+		if argoProjectId != "" {
+			tokenSecret.Data[argoProjectIdSecretKey] = []byte(argoProjectId)
+		}
 		return nil
 	})
 	return err
