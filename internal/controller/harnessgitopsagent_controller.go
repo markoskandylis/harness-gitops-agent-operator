@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -452,11 +451,8 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 			tokenSecret.Data = map[string][]byte{}
 		}
 		// Consumed by gitops-helm via envFrom(secretRef).
-		// The Harness API returns the private key as a base64-encoded PEM string.
-		// The gitops-agent expects raw PEM (starting with "-----BEGIN").
-		// Decode if the token appears to be base64-encoded PEM.
-		tokenBytes := decodeAgentToken(agentToken)
-		tokenSecret.Data[gitopsAgentTokenSecretKey] = tokenBytes
+		// Store exactly as returned by the Harness API (base64-encoded PEM).
+		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
 		// Consumed by ApplicationSet/Application `project:` field.
 		// Empty string is stored as-is; consumers should check before use.
 		if argoProjectId != "" {
@@ -465,22 +461,6 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 		return nil
 	})
 	return err
-}
-
-// decodeAgentToken returns the raw PEM bytes for the agent token.
-// The Harness API returns the private key as a base64-encoded PEM string.
-// If the input looks like base64 (doesn't start with "-----BEGIN"), decode it first.
-func decodeAgentToken(token string) []byte {
-	if strings.HasPrefix(token, "-----") {
-		// Already raw PEM.
-		return []byte(token)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(token)
-	if err != nil {
-		// Not valid base64 either — store as-is and let the agent fail with a clear message.
-		return []byte(token)
-	}
-	return decoded
 }
 
 // toHarnessIdentifier converts a string to a Harness-safe identifier
