@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -200,7 +201,29 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 6. REGISTER CLUSTER (if enabled and not yet done)
+	// 6. RESOLVE AGENT TOKEN (always do this before cluster registration so the
+	//    gitops-agent pod can start and connect to Harness, which is required
+	//    before cluster registration can succeed).
+	tokenSecretName := agentCR.Spec.TokenSecretRef
+	if tokenSecretName == "" {
+		tokenSecretName = agentCR.Name + "-agent-token"
+	}
+
+	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
+	if err != nil {
+		log.Error(err, "Failed to resolve agent details from Harness")
+		return ctrl.Result{}, err
+	}
+
+	// 7. WRITE TOKEN SECRET (must happen before cluster registration so the
+	//    gitops-agent gets the correct decoded PEM token and can connect).
+	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
+		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
+		return ctrl.Result{}, err
+	}
+
+	// 8. REGISTER CLUSTER (if enabled and not yet done)
+	// Requires the gitops-agent pod to be running and connected to Harness.
 	if clusterRegEnabled && agentCR.Status.ClusterIdentifier == "" {
 		clusterIdentifier, err := r.registerCluster(ctx, harnessSession, agentCR, agentIdentifier)
 		if err != nil {
@@ -213,24 +236,20 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		if err := r.Status().Update(ctx, agentCR); err != nil {
 			return ctrl.Result{}, err
 		}
-	}
 
-	// 7. RESOLVE AGENT TOKEN AND ARGO PROJECT ID
-	tokenSecretName := agentCR.Spec.TokenSecretRef
-	if tokenSecretName == "" {
-		tokenSecretName = agentCR.Name + "-agent-token"
-	}
-
-	agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
-	if err != nil {
-		log.Error(err, "Failed to resolve agent details from Harness")
-		return ctrl.Result{}, err
-	}
-
-	// 8. WRITE TOKEN SECRET (includes ARGO_PROJECT_ID alongside GITOPS_AGENT_TOKEN)
-	if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
-		log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
-		return ctrl.Result{}, err
+		// Re-fetch ArgoProject ID — it is created by Harness after first cluster registration.
+		_, argoProjectId, err = r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, nil)
+		if err != nil {
+			log.Error(err, "Failed to re-fetch agent details after cluster registration")
+			return ctrl.Result{}, err
+		}
+		// Update secret with fresh ArgoProject ID if available.
+		if argoProjectId != "" {
+			if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
+				log.Error(err, "Failed to update token secret with ArgoProject ID", "secret", tokenSecretName)
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	// 9. PERSIST ARGO PROJECT ID IN STATUS
@@ -318,7 +337,10 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 		},
 	}
 
-	log.Info("Registering cluster with Harness", "server", server, "connectionType", connectionType)
+	// Derive a Harness-safe identifier (alphanumeric + underscore, starts with letter/underscore).
+	clusterIdentifierStr := toHarnessIdentifier(clusterName)
+
+	log.Info("Registering cluster with Harness", "server", server, "connectionType", connectionType, "identifier", clusterIdentifierStr)
 
 	clusterResp, _, err := harnessSession.Client.ClustersApi.AgentClusterServiceCreate(
 		harnessSession.AuthCtx,
@@ -328,6 +350,7 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
 			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			Identifier:        optional.NewString(clusterIdentifierStr),
 		},
 	)
 	if err != nil {
@@ -426,7 +449,11 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 			tokenSecret.Data = map[string][]byte{}
 		}
 		// Consumed by gitops-helm via envFrom(secretRef).
-		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
+		// The Harness API returns the private key as a base64-encoded PEM string.
+		// The gitops-agent expects raw PEM (starting with "-----BEGIN").
+		// Decode if the token appears to be base64-encoded PEM.
+		tokenBytes := decodeAgentToken(agentToken)
+		tokenSecret.Data[gitopsAgentTokenSecretKey] = tokenBytes
 		// Consumed by ApplicationSet/Application `project:` field.
 		// Empty string is stored as-is; consumers should check before use.
 		if argoProjectId != "" {
@@ -435,6 +462,42 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 		return nil
 	})
 	return err
+}
+
+// decodeAgentToken returns the raw PEM bytes for the agent token.
+// The Harness API returns the private key as a base64-encoded PEM string.
+// If the input looks like base64 (doesn't start with "-----BEGIN"), decode it first.
+func decodeAgentToken(token string) []byte {
+	if strings.HasPrefix(token, "-----") {
+		// Already raw PEM.
+		return []byte(token)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		// Not valid base64 either — store as-is and let the agent fail with a clear message.
+		return []byte(token)
+	}
+	return decoded
+}
+
+// toHarnessIdentifier converts a string to a Harness-safe identifier
+// by replacing non-alphanumeric characters with underscores and ensuring
+// it starts with a letter or underscore.
+func toHarnessIdentifier(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' {
+			b[i] = c
+		} else {
+			b[i] = '_'
+		}
+	}
+	// Ensure the identifier starts with a letter or underscore.
+	if len(b) > 0 && b[0] >= '0' && b[0] <= '9' {
+		b = append([]byte{'_'}, b...)
+	}
+	return string(b)
 }
 
 func isHarnessAgentNotFound(err error) bool {
