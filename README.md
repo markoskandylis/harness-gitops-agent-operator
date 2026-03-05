@@ -65,7 +65,39 @@ Resources installed:
 2. RBAC (ClusterRole/ClusterRoleBinding)
 3. Leader election Role/RoleBinding
 4. Deployment
-5. Optional CRD install (`values.yaml -> crd.create`)
+5. CRD from `chart/harness-gitops-agent-controller/crds/`
+
+## Bootstrap Helm Chart (CR + GitOps Agent)
+
+Chart path:
+
+- `chart/harness-gitops-agent-bootstrap`
+
+Purpose:
+
+1. Creates `HarnessGitopsAgent` CR (controller registers agent in Harness and writes token secret).
+2. Installs Harness `gitops-helm` runtime in the same namespace.
+
+Install example:
+
+```sh
+helm upgrade --install hub-bootstrap chart/harness-gitops-agent-bootstrap \
+  -n argocd-agent \
+  --create-namespace \
+  --set gitopsAgent.harness.identity.accountIdentifier="<ACCOUNT_ID>" \
+  --set gitopsAgent.harness.identity.orgIdentifier="<ORG_ID>" \
+  --set gitopsAgent.harness.identity.projectIdentifier="<PROJECT_ID>" \
+  --set gitopsAgent.harness.identity.agentIdentifier="hubagent" \
+  --set harnessAgent.spec.apiKeySecretRef="harness-api-key-secret" \
+  --set harnessAgent.spec.tokenSecretRef="my-agent-token" \
+  --set gitopsAgent.agent.existingSecrets.agentToken="my-agent-token"
+```
+
+Notes:
+
+1. Controller must already be installed.
+2. Secret `harness-api-key-secret` with key `api_key` must exist in `argocd-agent`.
+3. Keep `harnessAgent.spec.tokenSecretRef` and `gitopsAgent.agent.existingSecrets.agentToken` identical.
 
 ## Quickstart (Local k3d)
 
@@ -91,9 +123,12 @@ k3d image import -c hub harness-gitops-agent-operator:dev
 ### 3. Install controller
 
 ```sh
+kubectl apply -f chart/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
+
 helm upgrade --install hgac chart/harness-gitops-agent-controller \
   --namespace harness-system \
-  --create-namespace
+  --create-namespace \
+  --skip-crds
 ```
 
 ### 4. Verify controller

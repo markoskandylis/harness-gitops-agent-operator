@@ -18,12 +18,15 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	// 1. KUBERNETES IMPORTS
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -44,6 +47,12 @@ const harnessAgentFinalizer = "infrastructure.kandylis.co.uk/finalizer"
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
 const argoProjectIdSecretKey = "ARGO_PROJECT_ID"
+const argoProjectResolvedConditionType = "ArgoProjectResolved"
+
+var (
+	errArgoProjectMappingNotFound = stderrors.New("argo project mapping not found")
+	errArgoProjectScopeMismatch   = stderrors.New("argo project mapping scope mismatch")
+)
 
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
@@ -215,12 +224,12 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	if !tokenAlreadyWritten {
 		// First time (or secret was deleted) — resolve and write the token.
-		agentToken, argoProjectId, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
+		agentToken, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
 		if err != nil {
-			log.Error(err, "Failed to resolve agent details from Harness")
+			log.Error(err, "Failed to resolve agent token from Harness")
 			return ctrl.Result{}, err
 		}
-		if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken, argoProjectId); err != nil {
+		if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken); err != nil {
 			log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
 			return ctrl.Result{}, err
 		}
@@ -248,11 +257,39 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if agentCR.Status.ArgoProjectId == "" {
 		argoProjectId, err := r.fetchArgoProjectId(harnessSession, agentCR, agentIdentifier)
 		if err != nil {
+			if stderrors.Is(err, errArgoProjectMappingNotFound) || stderrors.Is(err, errArgoProjectScopeMismatch) {
+				if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
+					reason := "MappingNotFound"
+					if stderrors.Is(err, errArgoProjectScopeMismatch) {
+						reason = "ScopeMismatch"
+					}
+					apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
+						Type:               argoProjectResolvedConditionType,
+						Status:             metav1.ConditionFalse,
+						Reason:             reason,
+						Message:            err.Error(),
+						ObservedGeneration: agentCR.GetGeneration(),
+					})
+					if updateErr := r.Status().Update(ctx, agentCR); updateErr != nil {
+						return ctrl.Result{}, updateErr
+					}
+					log.Info("Argo project mapping not ready; requeueing", "reason", reason, "details", err.Error())
+					return ctrl.Result{Requeue: true}, nil
+				}
+				return ctrl.Result{}, nil
+			}
 			log.Error(err, "Failed to fetch ArgoProject ID from Harness")
 			return ctrl.Result{}, err
 		}
 		if argoProjectId != "" {
 			agentCR.Status.ArgoProjectId = argoProjectId
+			apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
+				Type:               argoProjectResolvedConditionType,
+				Status:             metav1.ConditionTrue,
+				Reason:             "Resolved",
+				Message:            "Argo project mapping resolved via Harness API",
+				ObservedGeneration: agentCR.GetGeneration(),
+			})
 			if err := r.Status().Update(ctx, agentCR); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -262,10 +299,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				log.Error(err, "Failed to update secret with ArgoProject ID")
 				return ctrl.Result{}, err
 			}
-		} else if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
-			// Cluster was registered but AppProject not yet visible — requeue to retry.
-			log.Info("Cluster registered but ArgoProject not yet visible; requeueing")
-			return ctrl.Result{Requeue: true}, nil
 		}
 	}
 
@@ -365,15 +398,14 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 	return clusterResp.Identifier, nil
 }
 
-// resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN) and the
-// ArgoCD AppProject ID (the key in metadata.mappedProjects.appProjMap) in a
-// single GET call, falling back to credential regeneration if needed.
+// resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN),
+// falling back to credential regeneration if needed.
 func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 	harnessSession *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	agentIdentifier string,
 	credentials *nextgen.V1AgentCredentials,
-) (agentToken string, argoProjectId string, err error) {
+) (agentToken string, err error) {
 	// Fast path: creation response already carried the private key.
 	if credentials != nil && credentials.PrivateKey != "" {
 		agentToken = credentials.PrivateKey
@@ -392,22 +424,12 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 		},
 	)
 	if getErr != nil {
-		return "", "", getErr
+		return "", getErr
 	}
 
 	// Extract token from GET response if not already resolved.
 	if agentToken == "" && getResp.Credentials != nil && getResp.Credentials.PrivateKey != "" {
 		agentToken = getResp.Credentials.PrivateKey
-	}
-
-	// Extract ArgoCD AppProject ID — it is the key of the appProjMap.
-	if getResp.Metadata != nil &&
-		getResp.Metadata.MappedProjects != nil &&
-		len(getResp.Metadata.MappedProjects.AppProjMap) > 0 {
-		for projectId := range getResp.Metadata.MappedProjects.AppProjMap {
-			argoProjectId = projectId
-			break
-		}
 	}
 
 	// Last resort: regenerate credentials if token still empty.
@@ -417,15 +439,15 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 			agentIdentifier,
 		)
 		if regenErr != nil {
-			return "", "", regenErr
+			return "", regenErr
 		}
 		if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
-			return "", "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
+			return "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
 		}
 		agentToken = regenResp.Credentials.PrivateKey
 	}
 
-	return agentToken, argoProjectId, nil
+	return agentToken, nil
 }
 
 func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
@@ -433,7 +455,6 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	secretName string,
 	agentToken string,
-	argoProjectId string,
 ) error {
 	tokenSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -453,11 +474,6 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 		// Consumed by gitops-helm via envFrom(secretRef).
 		// Store exactly as returned by the Harness API (base64-encoded PEM).
 		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
-		// Consumed by ApplicationSet/Application `project:` field.
-		// Empty string is stored as-is; consumers should check before use.
-		if argoProjectId != "" {
-			tokenSecret.Data[argoProjectIdSecretKey] = []byte(argoProjectId)
-		}
 		return nil
 	})
 	return err
@@ -493,35 +509,58 @@ func (r *HarnessGitopsAgentReconciler) tokenSecretExists(ctx context.Context, ag
 	return ok && len(tok) > 0
 }
 
-// fetchArgoProjectId performs a read-only GET on the agent to extract the mapped AppProject ID.
-// It never regenerates credentials so it is safe to call on every reconcile.
+// fetchArgoProjectId resolves the Argo AppProject name for an agent by using the
+// latest v2 project-mapping endpoint, with a v1 fallback for compatibility.
 func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
 	harnessSession *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	agentIdentifier string,
 ) (string, error) {
-	getResp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerGet(
+	v2Resp, _, v2Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingsListByAgentV2(
 		harnessSession.AuthCtx,
 		agentIdentifier,
-		agentCR.Spec.AccountId,
-		&nextgen.AgentsApiAgentServiceForServerGetOpts{
+		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
+			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
 			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
-			Scope:             optional.NewString(agentCR.Spec.Scope),
-			WithCredentials:   optional.NewBool(false),
 		},
 	)
-	if err != nil {
-		return "", err
-	}
-	if getResp.Metadata != nil &&
-		getResp.Metadata.MappedProjects != nil &&
-		len(getResp.Metadata.MappedProjects.AppProjMap) > 0 {
-		for projectId := range getResp.Metadata.MappedProjects.AppProjMap {
-			return projectId, nil
+	if v2Err == nil {
+		projectID, err := selectArgoProjectIDFromV2Mappings(
+			v2Resp.AppProjectMappings,
+			agentCR.Spec.AccountId,
+			agentCR.Spec.OrgId,
+			agentCR.Spec.ProjectId,
+		)
+		if err == nil {
+			return projectID, nil
 		}
 	}
-	return "", nil
+
+	v1Resp, _, v1Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingListByAgent(
+		harnessSession.AuthCtx,
+		agentIdentifier,
+		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingListByAgentOpts{
+			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
+			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
+			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+		},
+	)
+	if v1Err != nil {
+		if v2Err != nil {
+			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback failed: %v", v2Err, v1Err)
+		}
+		return "", v1Err
+	}
+
+	projectID, selErr := selectArgoProjectIDFromV1Mapping(v1Resp.AppProjMap, agentCR.Spec.OrgId, agentCR.Spec.ProjectId)
+	if selErr != nil {
+		if v2Err != nil {
+			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback returned no scoped mapping: %v", v2Err, selErr)
+		}
+		return "", selErr
+	}
+	return projectID, nil
 }
 
 // upsertArgoProjectIdInSecret updates an existing token secret to add/update the ARGO_PROJECT_ID key.
@@ -551,6 +590,82 @@ func isHarnessAgentNotFound(err error) bool {
 	return strings.Contains(body, "agent not found")
 }
 
+func selectArgoProjectIDFromV2Mappings(
+	mappings []nextgen.V1AppProjectMappingV2,
+	accountID string,
+	orgID string,
+	projectID string,
+) (string, error) {
+	if len(mappings) == 0 {
+		return "", fmt.Errorf("%w: v2 returned no mappings", errArgoProjectMappingNotFound)
+	}
+
+	candidateSet := map[string]struct{}{}
+	scopeMismatch := false
+	for _, mapping := range mappings {
+		if mapping.AccountIdentifier == accountID &&
+			mapping.OrgIdentifier == orgID &&
+			mapping.ProjectIdentifier == projectID {
+			name := strings.TrimSpace(mapping.ArgoProjectName)
+			if name != "" {
+				candidateSet[name] = struct{}{}
+			}
+			continue
+		}
+		scopeMismatch = true
+	}
+
+	if len(candidateSet) == 0 {
+		if scopeMismatch {
+			return "", fmt.Errorf("%w: expected account=%s org=%s project=%s", errArgoProjectScopeMismatch, accountID, orgID, projectID)
+		}
+		return "", fmt.Errorf("%w: no usable argoProjectName for account=%s org=%s project=%s", errArgoProjectMappingNotFound, accountID, orgID, projectID)
+	}
+
+	candidates := make([]string, 0, len(candidateSet))
+	for candidate := range candidateSet {
+		candidates = append(candidates, candidate)
+	}
+	sort.Strings(candidates)
+	return candidates[0], nil
+}
+
+func selectArgoProjectIDFromV1Mapping(
+	appProjMap map[string]nextgen.Servicev1Project,
+	orgID string,
+	projectID string,
+) (string, error) {
+	if len(appProjMap) == 0 {
+		return "", fmt.Errorf("%w: v1 returned empty appProjMap", errArgoProjectMappingNotFound)
+	}
+
+	candidateSet := map[string]struct{}{}
+	scopeMismatch := false
+	for argoProjectID, project := range appProjMap {
+		if project.OrgIdentifier == orgID && project.ProjectIdentifier == projectID {
+			if strings.TrimSpace(argoProjectID) != "" {
+				candidateSet[argoProjectID] = struct{}{}
+			}
+			continue
+		}
+		scopeMismatch = true
+	}
+
+	if len(candidateSet) == 0 {
+		if scopeMismatch {
+			return "", fmt.Errorf("%w: expected org=%s project=%s", errArgoProjectScopeMismatch, orgID, projectID)
+		}
+		return "", fmt.Errorf("%w: no scoped v1 app project mapping for org=%s project=%s", errArgoProjectMappingNotFound, orgID, projectID)
+	}
+
+	candidates := make([]string, 0, len(candidateSet))
+	for candidate := range candidateSet {
+		candidates = append(candidates, candidate)
+	}
+	sort.Strings(candidates)
+	return candidates[0], nil
+}
+
 func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent) (*HarnessSession, error) {
 	secret := &corev1.Secret{}
 	secretKey := client.ObjectKey{Name: agentCR.Spec.ApiKeySecretRef, Namespace: agentCR.Namespace}
@@ -560,7 +675,7 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 
 	apiKey, ok := secret.Data["api_key"]
 	if !ok || len(apiKey) == 0 {
-		return nil, errors.NewBadRequest("api_key not found in secret")
+		return nil, k8serrors.NewBadRequest("api_key not found in secret")
 	}
 
 	cfg := nextgen.NewConfiguration()

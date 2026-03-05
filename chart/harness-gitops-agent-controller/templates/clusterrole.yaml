@@ -8,10 +8,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+    verbs: ["create", "get", "list", "patch", "update", "watch"]
   - apiGroups: ["infrastructure.kandylis.co.uk"]
     resources: ["harnessgitopsagents"]
-    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+    verbs: ["get", "list", "patch", "update", "watch"]
   - apiGroups: ["infrastructure.kandylis.co.uk"]
     resources: ["harnessgitopsagents/finalizers"]
     verbs: ["update"]

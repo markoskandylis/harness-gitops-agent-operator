@@ -1,12 +1,17 @@
-1. Build a local image from this repo root:
-   docker build -t {{ .Values.image.repository }}:{{ .Values.image.tag }} .
+Step-by-step installation (manual CRD + chart):
 
-2. Import it into your k3d cluster (example cluster name: hub):
-   k3d image import -c hub {{ .Values.image.repository }}:{{ .Values.image.tag }}
+1. Install CRD first:
+   kubectl apply -f chart/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
 
-3. Upgrade/install this chart:
+2. Install/upgrade chart without CRD management:
    helm upgrade --install {{ .Release.Name }} {{ .Chart.Name }} \
-     --namespace {{ .Release.Namespace }} --create-namespace
+     --namespace {{ .Release.Namespace }} \
+     --create-namespace \
+     --skip-crds
 
-4. Check controller logs:
+3. Verify resources:
+   kubectl get crd harnessgitopsagents.infrastructure.kandylis.co.uk
+   kubectl get deploy -n {{ .Release.Namespace }} {{ include "harness-gitops-agent-controller.fullname" . }}
+
+4. Follow controller logs:
    kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "harness-gitops-agent-controller.fullname" . }} -f

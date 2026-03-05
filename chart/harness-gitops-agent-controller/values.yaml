@@ -1,13 +1,11 @@
 nameOverride: ""
 fullnameOverride: ""
 
-crd:
-  create: false
-
 replicaCount: 1
+revisionHistoryLimit: 5
 
 image:
-  repository: harness-gitops-agent-operator
+  repository: mkandylis/harness-gitops-agent-operator
   tag: dev
   pullPolicy: IfNotPresent
 
@@ -16,6 +14,8 @@ imagePullSecrets: []
 serviceAccount:
   create: true
   name: ""
+  annotations: {}
+  automountServiceAccountToken: true
 
 rbac:
   create: true
@@ -24,13 +24,27 @@ leaderElection:
   enabled: true
 
 manager:
-  # Keep metrics disabled by default for local testing.
-  metricsBindAddress: "0"
-  healthProbeBindAddress: ":8081"
+  healthProbe:
+    bindAddress: ":8081"
+    port: 8081
+  metrics:
+    # Use "0" to disable metrics endpoint. For enabled metrics, keep bindAddress and port aligned.
+    bindAddress: "0"
+    port: 8080
+    secure: true
+  # Keep HTTP/2 disabled by default due to known HTTP/2 CVEs.
+  enableHTTP2: false
+  # Controller-runtime zap development mode; set false for production-like JSON logs.
+  zapDevelopment: true
   extraArgs: []
+  env: []
+  envFrom: []
 
 podAnnotations: {}
 podLabels: {}
+priorityClassName: ""
+enableServiceLinks: false
+terminationGracePeriodSeconds: 30
 
 podSecurityContext:
   runAsNonRoot: true
@@ -38,22 +52,39 @@ podSecurityContext:
     type: RuntimeDefault
 
 securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL
 
+probes:
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 1
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+
 resources:
   limits:
     cpu: 500m
-    memory: 128Mi
+    memory: 256Mi
   requests:
-    cpu: 10m
-    memory: 64Mi
+    cpu: 50m
+    memory: 128Mi
 
 nodeSelector: {}
 tolerations: []
 affinity: {}
+topologySpreadConstraints: []
 
-env: []
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

@@ -1,3 +1,0 @@
-{{- if .Values.crd.create }}
-{{- .Files.Get "files/harnessgitopsagent-crd.yaml" }}
-{{- end }}

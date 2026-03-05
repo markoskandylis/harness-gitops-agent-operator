@@ -22,6 +22,7 @@
 {{- define "harness-gitops-agent-controller.labels" -}}
 helm.sh/chart: {{ include "harness-gitops-agent-controller.chart" . }}
 {{ include "harness-gitops-agent-controller.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -34,6 +35,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "harness-gitops-agent-controller.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccount.name -}}
+{{- required "serviceAccount.name must be set when serviceAccount.create=false" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
