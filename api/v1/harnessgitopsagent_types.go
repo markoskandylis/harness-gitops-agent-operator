@@ -20,10 +20,65 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// ClusterSecretPatchSpec defines an ArgoCD cluster registration secret to patch
+// once the agent registration and ArgoProject ID are resolved.
+type ClusterSecretPatchSpec struct {
+	// Name of the ArgoCD cluster registration secret to patch.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
 
-// HarnessGitopsAgentSpec defines the desired state of HarnessGitopsAgent
+	// Namespace of the secret. Defaults to the CR namespace if omitted.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// EnableAgent sets the enable_agent label value on the secret.
+	// Use "true" to activate ApplicationSets targeting this cluster.
+	// +kubebuilder:validation:Enum="true";"false"
+	// +kubebuilder:default:="false"
+	EnableAgent string `json:"enableAgent"`
+}
+
+// ClusterRegistrationSpec defines how the controller registers the cluster
+// that this agent runs on (or connects to) with the Harness GitOps Clusters API.
+// Registering a cluster is what triggers Harness to create the ArgoCD AppProject
+// mapping for the agent's Harness project.
+type ClusterRegistrationSpec struct {
+	// Enabled controls whether the controller registers a cluster after agent creation.
+	// Defaults to false. Set to true to trigger AppProject creation automatically.
+	// +kubebuilder:default:=false
+	Enabled bool `json:"enabled"`
+
+	// Server is the Kubernetes API server URL to register.
+	// Defaults to "https://kubernetes.default.svc" (in-cluster).
+	// For remote clusters use the external API server URL.
+	// +kubebuilder:default:="https://kubernetes.default.svc"
+	// +optional
+	Server string `json:"server,omitempty"`
+
+	// Name is the display name for this cluster in Harness.
+	// Defaults to the HarnessGitopsAgent CR name if not set.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// ConnectionType determines the authentication method.
+	//   IN_CLUSTER      — agent runs inside the cluster being registered (default).
+	//                     Uses https://kubernetes.default.svc, no credentials needed.
+	//   SERVICE_ACCOUNT — remote cluster; requires CredentialsRef with bearerToken + caData.
+	// +kubebuilder:validation:Enum=IN_CLUSTER;SERVICE_ACCOUNT
+	// +kubebuilder:default:="IN_CLUSTER"
+	// +optional
+	ConnectionType string `json:"connectionType,omitempty"`
+
+	// CredentialsRef is the name of a Secret in the same namespace containing
+	// credentials for SERVICE_ACCOUNT connection type.
+	// Supported keys:
+	//   bearerToken — Kubernetes service account token (required for SERVICE_ACCOUNT)
+	//   caData      — base64-encoded PEM CA certificate bundle
+	//   insecure    — "true" to skip TLS verification (local/dev only)
+	// +optional
+	CredentialsRef string `json:"credentialsRef,omitempty"`
+}
+
 // HarnessGitopsAgentSpec defines the desired state of HarnessGitopsAgent
 type HarnessGitopsAgentSpec struct {
 	// Name is the name of the Harness GitOps Agent
@@ -43,43 +98,93 @@ type HarnessGitopsAgentSpec struct {
 	AccountId string `json:"accountId"`
 
 	// OrgId is the Harness Organization Identifier
-	// +kubebuilder:validation:Required
-	OrgId string `json:"orgId"`
+	// +kubebuilder:validation:optional
+	OrgId string `json:"orgId,omitempty"`
 
 	// ProjectId is the Harness Project Identifier
-	// +kubebuilder:validation:Required
-	ProjectId string `json:"projectId"`
+	// +kubebuilder:validation:optional
+	ProjectId string `json:"projectId,omitempty"`
 
-	// Type of agent (e.g., "KUBERNETES")
-	// +kubebuilder:default:="KUBERNETES"
+	// Type of agent (e.g., "MANAGED_ARGO_PROVIDER")
+	// +kubebuilder:validation:Enum=MANAGED_ARGO_PROVIDER;CONNECTED_ARGO_PROVIDER
+	// +kubebuilder:default:="MANAGED_ARGO_PROVIDER"
 	Type string `json:"type,omitempty"`
 
 	// Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
 	// +kubebuilder:default:="PROJECT"
 	Scope string `json:"scope,omitempty"`
 
-	// ApiKeySecretRef is the name of the Secret containing the Harness API Key
-	// Key inside secret must be "api_key"
+	// ExistingAgentIdentifier, if set, skips agent creation and reuses this already-running
+	// agent for cluster registration and AppProject discovery. Use when an ORG/ACCOUNT-scope
+	// agent is already connected and you only need to register a cluster under a new project
+	// to obtain its ArgoProject ID. TokenSecretRef is not required in this mode.
+	// +optional
+	ExistingAgentIdentifier string `json:"existingAgentIdentifier,omitempty"`
+
+	// ArgoProjectName is the name of the existing in-cluster ArgoCD AppProject to map
+	// to the Harness project in spec.projectId.
+	// Required when ExistingAgentIdentifier is set.
+	// Required when scope is ORG or ACCOUNT and projectId is set (used to create the primary mapping).
+	// +optional
+	ArgoProjectName string `json:"argoProjectName,omitempty"`
+
+	// ApiKeySecretRef is the name of the Secret containing the Harness API Key.
+	// Key inside secret must be "api_key".
 	// +kubebuilder:validation:Required
 	ApiKeySecretRef string `json:"apiKeySecretRef"`
 
-	// TokenSecretRef is the name of the Secret where the generated Agent Token will be stored
-	// +kubebuilder:validation:Required
-	TokenSecretRef string `json:"tokenSecretRef"`
+	// TokenSecretRef is the name of the Secret where the generated Agent Token will be stored.
+	// The controller writes GITOPS_AGENT_TOKEN and ARGO_PROJECT_ID into this secret.
+	// Not required when ExistingAgentIdentifier is set.
+	// +optional
+	TokenSecretRef string `json:"tokenSecretRef,omitempty"`
+
+	// ClusterRegistration controls whether the controller registers a cluster with
+	// Harness after agent creation. This is required to trigger AppProject creation,
+	// which makes the agent and its Applications visible in the Harness UI.
+	// +optional
+	ClusterRegistration *ClusterRegistrationSpec `json:"clusterRegistration,omitempty"`
+
+	// ClusterSecretPatch optionally references an ArgoCD cluster registration secret
+	// on the same cluster. After the ArgoProject ID is resolved, the controller patches
+	// the secret with harness_argo_project_id annotation and enable_agent label.
+	// +optional
+	ClusterSecretPatch *ClusterSecretPatchSpec `json:"clusterSecretPatch,omitempty"`
 }
 
 // HarnessGitopsAgentStatus defines the observed state of HarnessGitopsAgent.
-// HarnessGitopsAgentStatus defines the observed state of HarnessGitopsAgent
 type HarnessGitopsAgentStatus struct {
-	// AgentIdentifier is the ID returned by Harness after registration
+	// AgentIdentifier is the ID returned by Harness after agent registration.
 	AgentIdentifier string `json:"agentIdentifier,omitempty"`
 
-	// Conditions store the detailed state transitions
+	// ClusterIdentifier is the Harness identifier of the cluster registered via
+	// ClusterRegistration. Populated after successful cluster registration.
+	ClusterIdentifier string `json:"clusterIdentifier,omitempty"`
+
+	// ArgoProjectId is the ArgoCD AppProject name (random 8-char ID) that Harness
+	// creates and maps to this agent's Harness project after cluster registration.
+	// Used as the `project:` field in ApplicationSets and Applications.
+	ArgoProjectId string `json:"argoProjectId,omitempty"`
+
+	// ArgoProjectMappingId is the identifier returned by Harness after the AppProject
+	// mapping is created via AppProjectMappingServiceCreateV2. Used as an idempotency guard.
+	// +optional
+	ArgoProjectMappingId string `json:"argoProjectMappingId,omitempty"`
+
+	// ClusterSecretPatched is true once the referenced cluster registration secret
+	// has been successfully patched with harness_argo_project_id and enable_agent.
+	// +optional
+	ClusterSecretPatched bool `json:"clusterSecretPatched,omitempty"`
+
+	// Conditions store the detailed state transitions.
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.status.agentIdentifier`
+// +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=`.status.clusterIdentifier`
+// +kubebuilder:printcolumn:name="ArgoProject",type=string,JSONPath=`.status.argoProjectId`
 
 // HarnessGitopsAgent is the Schema for the harnessgitopsagents API
 type HarnessGitopsAgent struct {

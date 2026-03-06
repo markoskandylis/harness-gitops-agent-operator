@@ -1,135 +1,202 @@
-# harness-gitops-agent-operator
-// TODO(user): Add simple overview of use/purpose
+# Harness GitOps Agent Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Kubernetes controller that manages Harness GitOps Agent lifecycle using the `HarnessGitopsAgent` custom resource.
 
-## Getting Started
+## Overview
+
+The controller reconciles `HarnessGitopsAgent` resources and performs:
+
+1. Agent registration in Harness using Harness Go SDK.
+2. Status update with the resolved Harness agent identifier.
+3. Token secret creation/update in Kubernetes.
+4. Agent deletion in Harness during CR deletion (finalizer-driven).
+
+## Features
+
+1. Idempotent reconcile for create/update/delete.
+2. Finalizer-based external cleanup.
+3. Token secret written for Harness `gitops-helm` consumption.
+4. Safe delete behavior:
+   If Harness credentials are missing, finalizer is retained so resources are not orphaned.
+5. "Agent not found" during delete is treated as already deleted.
+
+## API
+
+- Group/Version: `infrastructure.kandylis.co.uk/v1`
+- Kind: `HarnessGitopsAgent`
+
+Required spec fields:
+
+1. `name`
+2. `identifier`
+3. `accountId`
+4. `orgId`
+5. `projectId`
+6. `operator`
+7. `apiKeySecretRef`
+8. `tokenSecretRef`
+
+Common optional/defaulted fields:
+
+1. `scope` (default `PROJECT`)
+2. `type` (default `KUBERNETES` in CRD)
+
+## Secret Contract
+
+Input secret (referenced by `spec.apiKeySecretRef`) must contain:
+
+- key: `api_key`
+
+Output token secret (`spec.tokenSecretRef`) contains:
+
+- key: `GITOPS_AGENT_TOKEN`
+
+Note: legacy token key support was removed. Only `GITOPS_AGENT_TOKEN` is written.
+
+## Controller Helm Chart
+
+Chart path:
+
+- `chart/harness-gitops-agent-controller`
+
+Resources installed:
+
+1. ServiceAccount
+2. RBAC (ClusterRole/ClusterRoleBinding)
+3. Leader election Role/RoleBinding
+4. Deployment
+5. CRD from `chart/harness-gitops-agent-controller/crds/`
+
+## Bootstrap Helm Chart (CR + GitOps Agent)
+
+Chart path:
+
+- `chart/harness-gitops-agent-bootstrap`
+
+Purpose:
+
+1. Creates `HarnessGitopsAgent` CR (controller registers agent in Harness and writes token secret).
+2. Installs Harness `gitops-helm` runtime in the same namespace.
+
+Install example:
+
+```sh
+helm upgrade --install hub-bootstrap chart/harness-gitops-agent-bootstrap \
+  -n argocd-agent \
+  --create-namespace \
+  --set gitopsAgent.harness.identity.accountIdentifier="<ACCOUNT_ID>" \
+  --set gitopsAgent.harness.identity.orgIdentifier="<ORG_ID>" \
+  --set gitopsAgent.harness.identity.projectIdentifier="<PROJECT_ID>" \
+  --set gitopsAgent.harness.identity.agentIdentifier="hubagent" \
+  --set harnessAgent.spec.apiKeySecretRef="harness-api-key-secret" \
+  --set harnessAgent.spec.tokenSecretRef="my-agent-token" \
+  --set gitopsAgent.agent.existingSecrets.agentToken="my-agent-token"
+```
+
+Notes:
+
+1. Controller must already be installed.
+2. Secret `harness-api-key-secret` with key `api_key` must exist in `argocd-agent`.
+3. Keep `harnessAgent.spec.tokenSecretRef` and `gitopsAgent.agent.existingSecrets.agentToken` identical.
+
+## Quickstart (Local k3d)
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+1. Docker
+2. kubectl
+3. Helm 3
+4. k3d
 
-```sh
-make docker-build docker-push IMG=<some-registry>/harness-gitops-agent-operator:tag
-```
-
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+### 1. Build local controller image
 
 ```sh
-make install
+docker build -t harness-gitops-agent-operator:dev .
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+### 2. Import image into k3d cluster
 
 ```sh
-make deploy IMG=<some-registry>/harness-gitops-agent-operator:tag
+k3d image import -c hub harness-gitops-agent-operator:dev
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+### 3. Install controller
 
 ```sh
-kubectl apply -k config/samples/
+kubectl apply -f chart/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
+
+helm upgrade --install hgac chart/harness-gitops-agent-controller \
+  --namespace harness-system \
+  --create-namespace \
+  --skip-crds
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### 4. Verify controller
 
 ```sh
-kubectl delete -k config/samples/
+kubectl get deploy,pod -n harness-system
+kubectl logs -n harness-system deploy/hgac-harness-gitops-agent-controller -f
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+## Usage
+
+### 1. Create Harness API key secret
 
 ```sh
-make uninstall
+kubectl create namespace argocd-agent --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n argocd-agent create secret generic harness-api-key-secret \
+  --from-literal=api_key='<HARNESS_PAT>'
 ```
 
-**UnDeploy the controller from the cluster:**
+### 2. Apply custom resource
 
 ```sh
-make undeploy
+kubectl apply -f test/manifests/my-agent.yaml
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+### 3. Verify reconcile
 
 ```sh
-make build-installer IMG=<some-registry>/harness-gitops-agent-operator:tag
+kubectl get harnessgitopsagent -n argocd-agent hub-agent -o yaml
+kubectl get secret -n argocd-agent my-agent-token -o yaml
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+Expected:
 
-2. Using the installer
+1. `.status.agentIdentifier` is populated.
+2. Finalizer is present while resource exists.
+3. Token secret contains `GITOPS_AGENT_TOKEN`.
 
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+## Deletion
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/harness-gitops-agent-operator/<tag or branch>/dist/install.yaml
+kubectl delete -f test/manifests/my-agent.yaml
 ```
 
-### By providing a Helm Chart
+The controller removes the agent from Harness and then removes the finalizer.
 
-1. Build the chart using the optional helm plugin
+## Troubleshooting
+
+If CR is stuck in `Terminating`:
+
+1. Ensure controller is running in `harness-system`.
+2. Ensure `spec.apiKeySecretRef` exists in CR namespace and contains `api_key`.
+3. Check controller logs:
 
 ```sh
-kubebuilder edit --plugins=helm/v2-alpha
+kubectl logs -n harness-system deploy/hgac-harness-gitops-agent-controller --tail=200
 ```
 
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
+## Development
 
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+```sh
+go test ./...
+make manifests
+make generate
+```
 
 ## License
 
 Copyright 2025.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Licensed under the Apache License, Version 2.0.
