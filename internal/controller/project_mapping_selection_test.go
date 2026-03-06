@@ -89,3 +89,24 @@ func TestSelectArgoProjectIDFromV1Mapping_ScopeMismatch(t *testing.T) {
 		t.Fatalf("expected errArgoProjectScopeMismatch, got %v", err)
 	}
 }
+
+func TestScopedAgentIdentifier_OrgScopeAddsPrefix(t *testing.T) {
+	got := scopedAgentIdentifier("ORG", "my-agent")
+	if got != "org.my-agent" {
+		t.Fatalf("expected org-prefixed identifier, got %q", got)
+	}
+}
+
+func TestScopedAgentIdentifier_AlreadyPrefixedUnchanged(t *testing.T) {
+	got := scopedAgentIdentifier("ORG", "org.my-agent")
+	if got != "org.my-agent" {
+		t.Fatalf("expected existing prefixed identifier to remain unchanged, got %q", got)
+	}
+}
+
+func TestScopedAgentIdentifier_ProjectScopeUnchanged(t *testing.T) {
+	got := scopedAgentIdentifier("PROJECT", "my-agent")
+	if got != "my-agent" {
+		t.Fatalf("expected project scope identifier to remain unchanged, got %q", got)
+	}
+}

@@ -98,20 +98,35 @@ type HarnessGitopsAgentSpec struct {
 	AccountId string `json:"accountId"`
 
 	// OrgId is the Harness Organization Identifier
-	// +kubebuilder:validation:Required
-	OrgId string `json:"orgId"`
+	// +kubebuilder:validation:optional
+	OrgId string `json:"orgId,omitempty"`
 
 	// ProjectId is the Harness Project Identifier
-	// +kubebuilder:validation:Required
-	ProjectId string `json:"projectId"`
+	// +kubebuilder:validation:optional
+	ProjectId string `json:"projectId,omitempty"`
 
 	// Type of agent (e.g., "MANAGED_ARGO_PROVIDER")
-	// +kubebuilder:default:="KUBERNETES"
+	// +kubebuilder:validation:Enum=MANAGED_ARGO_PROVIDER;CONNECTED_ARGO_PROVIDER
+	// +kubebuilder:default:="MANAGED_ARGO_PROVIDER"
 	Type string `json:"type,omitempty"`
 
 	// Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
 	// +kubebuilder:default:="PROJECT"
 	Scope string `json:"scope,omitempty"`
+
+	// ExistingAgentIdentifier, if set, skips agent creation and reuses this already-running
+	// agent for cluster registration and AppProject discovery. Use when an ORG/ACCOUNT-scope
+	// agent is already connected and you only need to register a cluster under a new project
+	// to obtain its ArgoProject ID. TokenSecretRef is not required in this mode.
+	// +optional
+	ExistingAgentIdentifier string `json:"existingAgentIdentifier,omitempty"`
+
+	// ArgoProjectName is the name of the existing in-cluster ArgoCD AppProject to map
+	// to the Harness project in spec.projectId.
+	// Required when ExistingAgentIdentifier is set.
+	// Required when scope is ORG or ACCOUNT and projectId is set (used to create the primary mapping).
+	// +optional
+	ArgoProjectName string `json:"argoProjectName,omitempty"`
 
 	// ApiKeySecretRef is the name of the Secret containing the Harness API Key.
 	// Key inside secret must be "api_key".
@@ -120,8 +135,9 @@ type HarnessGitopsAgentSpec struct {
 
 	// TokenSecretRef is the name of the Secret where the generated Agent Token will be stored.
 	// The controller writes GITOPS_AGENT_TOKEN and ARGO_PROJECT_ID into this secret.
-	// +kubebuilder:validation:Required
-	TokenSecretRef string `json:"tokenSecretRef"`
+	// Not required when ExistingAgentIdentifier is set.
+	// +optional
+	TokenSecretRef string `json:"tokenSecretRef,omitempty"`
 
 	// ClusterRegistration controls whether the controller registers a cluster with
 	// Harness after agent creation. This is required to trigger AppProject creation,
@@ -149,6 +165,11 @@ type HarnessGitopsAgentStatus struct {
 	// creates and maps to this agent's Harness project after cluster registration.
 	// Used as the `project:` field in ApplicationSets and Applications.
 	ArgoProjectId string `json:"argoProjectId,omitempty"`
+
+	// ArgoProjectMappingId is the identifier returned by Harness after the AppProject
+	// mapping is created via AppProjectMappingServiceCreateV2. Used as an idempotency guard.
+	// +optional
+	ArgoProjectMappingId string `json:"argoProjectMappingId,omitempty"`
 
 	// ClusterSecretPatched is true once the referenced cluster registration secret
 	// has been successfully patched with harness_argo_project_id and enable_agent.

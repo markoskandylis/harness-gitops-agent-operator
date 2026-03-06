@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	// 1. KUBERNETES IMPORTS
 	corev1 "k8s.io/api/core/v1"
@@ -85,6 +86,45 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	if isAgentMarkedToBeDeleted {
 		if controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
+			if agentCR.Spec.ExistingAgentIdentifier != "" {
+				// Do not delete the shared agent. If we created a mapping, delete it first.
+				if agentCR.Status.ArgoProjectMappingId != "" {
+					log.Info("Deleting AppProject mapping", "mappingId", agentCR.Status.ArgoProjectMappingId)
+					harnessSession, err := r.getHarnessClient(ctx, agentCR)
+					if err != nil {
+						log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
+						return ctrl.Result{}, err
+					}
+					existingAgentIdentifier := scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.ExistingAgentIdentifier)
+					_, _, delErr := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
+						harnessSession.AuthCtx,
+						existingAgentIdentifier,
+						agentCR.Status.ArgoProjectMappingId,
+						&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
+							AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
+							OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+							ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
+						},
+					)
+					if delErr != nil {
+						if swaggerErr, ok := delErr.(nextgen.GenericSwaggerError); ok {
+							body := strings.ToLower(string(swaggerErr.Body()))
+							if strings.Contains(body, "not found") {
+								log.Info("AppProject mapping already absent, proceeding")
+							} else {
+								log.Error(delErr, "Failed to delete AppProject mapping; retaining finalizer")
+								return ctrl.Result{}, delErr
+							}
+						} else {
+							log.Error(delErr, "Failed to delete AppProject mapping; retaining finalizer")
+							return ctrl.Result{}, delErr
+						}
+					}
+				}
+				log.Info("Skipping Harness agent delete — CR references an existing agent", "existingAgentIdentifier", agentCR.Spec.ExistingAgentIdentifier)
+				controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
+				return ctrl.Result{}, r.Update(ctx, agentCR)
+			}
 			log.Info("Deleting agent from Harness Platform...")
 
 			harnessSession, err := r.getHarnessClient(ctx, agentCR)
@@ -103,13 +143,14 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
 			}
 
+			agentAPIIdentifier := scopedAgentIdentifier(agentCR.Spec.Scope, agentIdentifier)
 			_, _, err = harnessSession.Client.AgentApi.AgentServiceForServerDelete(
 				harnessSession.AuthCtx,
-				agentIdentifier,
+				agentAPIIdentifier,
 				&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
 					AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-					OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-					ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+					OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+					ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
 					Name:              optional.NewString(agentCR.Spec.Name),
 					Type_:             optional.NewString(agentCR.Spec.Type),
 					Scope:             optional.NewString(agentCR.Spec.Scope),
@@ -150,13 +191,17 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// 4. CHECK IF FULLY RECONCILED (Idempotency)
 	// Cluster registration is required only when spec.clusterRegistration.enabled is true.
 	clusterRegEnabled := agentCR.Spec.ClusterRegistration != nil && agentCR.Spec.ClusterRegistration.Enabled
-	agentDone := agentCR.Status.AgentIdentifier != ""
+	agentDone := agentCR.Status.AgentIdentifier != "" || agentCR.Spec.ExistingAgentIdentifier != ""
 	clusterDone := !clusterRegEnabled || agentCR.Status.ClusterIdentifier != ""
-	argoProjectDone := agentCR.Status.ArgoProjectId != ""
-
+	isOrgOrAccount := agentCR.Spec.Scope == "ORG" || agentCR.Spec.Scope == "ACCOUNT"
+	argoProjectDone := agentCR.Status.ArgoProjectId != "" ||
+		agentCR.Spec.ExistingAgentIdentifier != "" ||
+		(isOrgOrAccount && agentCR.Spec.ProjectId == "")
 	secretPatched := agentCR.Spec.ClusterSecretPatch == nil || agentCR.Status.ClusterSecretPatched
+	needsMapping := agentCR.Spec.ExistingAgentIdentifier != "" && agentCR.Spec.ArgoProjectName != ""
+	mappingDone := !needsMapping || agentCR.Status.ArgoProjectMappingId != ""
 
-	if agentDone && clusterDone && argoProjectDone && secretPatched {
+	if agentDone && clusterDone && argoProjectDone && secretPatched && mappingDone {
 		return ctrl.Result{}, nil
 	}
 
@@ -170,7 +215,17 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	agentIdentifier := agentCR.Status.AgentIdentifier
 	var agentCredentials *nextgen.V1AgentCredentials
 
-	if agentIdentifier == "" {
+	if agentCR.Spec.ExistingAgentIdentifier != "" {
+		// EXISTING AGENT MODE — skip creation and token write.
+		agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.ExistingAgentIdentifier)
+		if agentCR.Status.AgentIdentifier == "" {
+			agentCR.Status.AgentIdentifier = agentIdentifier
+			if err := r.Status().Update(ctx, agentCR); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		log.Info("Reusing existing Harness GitOps Agent", "agentIdentifier", agentIdentifier)
+	} else if agentIdentifier == "" {
 		log.Info("Registering new Harness GitOps Agent...", "Name", agentCR.Spec.Name)
 
 		gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
@@ -201,7 +256,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{}, err
 		}
 
-		agentIdentifier = resp.Identifier
+		agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, resp.Identifier)
 		agentCredentials = resp.Credentials
 		log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
 
@@ -211,37 +266,33 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 6. WRITE TOKEN SECRET (only on first creation to avoid invalidating the running agent).
-	//    The secret must exist before cluster registration so the gitops-agent pod can
-	//    start, connect to Harness, and be "seen" as connected.
+	// 6. WRITE TOKEN SECRET — skipped in existing-agent mode (agent already has a token).
 	tokenSecretName := agentCR.Spec.TokenSecretRef
-	if tokenSecretName == "" {
-		tokenSecretName = agentCR.Name + "-agent-token"
-	}
-
-	// Check if the token secret already has a valid GITOPS_AGENT_TOKEN.
-	// If so, skip token resolution to prevent regenerating credentials and
-	// invalidating the currently-running gitops-agent pod.
-	tokenAlreadyWritten := r.tokenSecretExists(ctx, agentCR, tokenSecretName)
-
-	if !tokenAlreadyWritten {
-		// First time (or secret was deleted) — resolve and write the token.
-		agentToken, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
-		if err != nil {
-			log.Error(err, "Failed to resolve agent token from Harness")
-			return ctrl.Result{}, err
+	if agentCR.Spec.ExistingAgentIdentifier == "" {
+		if tokenSecretName == "" {
+			tokenSecretName = agentCR.Name + "-agent-token"
 		}
-		if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken); err != nil {
-			log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
-			return ctrl.Result{}, err
+		// Skip if already written to avoid invalidating the running agent.
+		if !r.tokenSecretExists(ctx, agentCR, tokenSecretName) {
+			agentToken, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
+			if err != nil {
+				log.Error(err, "Failed to resolve agent token from Harness")
+				return ctrl.Result{}, err
+			}
+			if err := r.upsertAgentTokenSecret(ctx, agentCR, tokenSecretName, agentToken); err != nil {
+				log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
+				return ctrl.Result{}, err
+			}
+			log.Info("Wrote agent token secret", "secret", tokenSecretName)
 		}
-		log.Info("Wrote agent token secret", "secret", tokenSecretName)
 	}
 
 	// 7. REGISTER CLUSTER (if enabled and not yet done)
+	// Skipped in existing-agent mode — no new agent means no new cluster registration.
 	// Requires the gitops-agent pod to be running and connected to Harness.
-	if clusterRegEnabled && agentCR.Status.ClusterIdentifier == "" {
-		clusterIdentifier, err := r.registerCluster(ctx, harnessSession, agentCR, agentIdentifier)
+	agentAPIIdentifier := scopedAgentIdentifier(agentCR.Spec.Scope, agentIdentifier)
+	if agentCR.Spec.ExistingAgentIdentifier == "" && clusterRegEnabled && agentCR.Status.ClusterIdentifier == "" {
+		clusterIdentifier, err := r.registerCluster(ctx, harnessSession, agentCR, agentAPIIdentifier)
 		if err != nil {
 			log.Error(err, "Failed to register cluster with Harness")
 			return ctrl.Result{}, err
@@ -254,57 +305,71 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 9. FETCH AND PERSIST ARGO PROJECT ID IN STATUS
-	// Only needed if not already done. Uses a read-only GET (no token regeneration).
-	if agentCR.Status.ArgoProjectId == "" {
-		argoProjectId, err := r.fetchArgoProjectId(harnessSession, agentCR, agentIdentifier)
+	// 8. CREATE APP PROJECT MAPPING (existing-agent mode only)
+	// Maps the in-cluster ArgoProject to the target Harness project via the API.
+	if needsMapping && agentCR.Status.ArgoProjectMappingId == "" {
+		mappingId, err := r.createAppProjectMapping(
+			ctx,
+			harnessSession,
+			agentCR,
+			scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.ExistingAgentIdentifier),
+			agentCR.Spec.ArgoProjectName,
+		)
 		if err != nil {
-			if stderrors.Is(err, errArgoProjectMappingNotFound) || stderrors.Is(err, errArgoProjectScopeMismatch) {
-				if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
-					reason := "MappingNotFound"
-					if stderrors.Is(err, errArgoProjectScopeMismatch) {
-						reason = "ScopeMismatch"
-					}
-					apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
-						Type:               argoProjectResolvedConditionType,
-						Status:             metav1.ConditionFalse,
-						Reason:             reason,
-						Message:            err.Error(),
-						ObservedGeneration: agentCR.GetGeneration(),
-					})
-					if updateErr := r.Status().Update(ctx, agentCR); updateErr != nil {
-						return ctrl.Result{}, updateErr
-					}
-					log.Info("Argo project mapping not ready; requeueing", "reason", reason, "details", err.Error())
-					return ctrl.Result{Requeue: true}, nil
-				}
+			log.Error(err, "Failed to create AppProject mapping")
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+		}
+		if mappingId != "" {
+			agentCR.Status.ArgoProjectMappingId = mappingId
+			if err := r.Status().Update(ctx, agentCR); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("Created AppProject mapping", "mappingId", mappingId, "argoProjectName", agentCR.Spec.ArgoProjectName, "project", agentCR.Spec.ProjectId)
+		}
+	}
+
+	// 9. RESOLVE ARGO PROJECT ID
+	// Three branches (existing-agent mode is already handled via needsMapping above):
+	//   ORG/ACCOUNT + projectId set + argoProjectName set → create explicit mapping
+	//   ORG/ACCOUNT + projectId set + argoProjectName empty → warn and wait for spec update
+	//   PROJECT scope → Harness auto-creates the mapping; fetch it via the API
+	//   ORG/ACCOUNT + no projectId → skip (argoProjectDone already true)
+	if agentCR.Spec.ExistingAgentIdentifier == "" && agentCR.Status.ArgoProjectId == "" {
+		if isOrgOrAccount && agentCR.Spec.ProjectId != "" {
+			argoProjectName := agentCR.Spec.ArgoProjectName
+			if argoProjectName == "" {
+				log.Info("ArgoProjectName is required for ORG/ACCOUNT scope with projectId set; skipping mapping until set")
 				return ctrl.Result{}, nil
 			}
-			log.Error(err, "Failed to fetch ArgoProject ID from Harness")
-			return ctrl.Result{}, err
-		}
-		if argoProjectId != "" {
-			agentCR.Status.ArgoProjectId = argoProjectId
+			// ORG/ACCOUNT scope: create the mapping explicitly.
+			mappingId, err := r.createAppProjectMapping(ctx, harnessSession, agentCR, agentAPIIdentifier, argoProjectName)
+			if err != nil {
+				log.Error(err, "Failed to create AppProject mapping for ORG-scope agent")
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+			}
+			agentCR.Status.ArgoProjectId = argoProjectName
+			if mappingId != "" {
+				agentCR.Status.ArgoProjectMappingId = mappingId
+			}
 			apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
 				Type:               argoProjectResolvedConditionType,
 				Status:             metav1.ConditionTrue,
-				Reason:             "Resolved",
-				Message:            "Argo project mapping resolved via Harness API",
+				Reason:             "MappingCreated",
+				Message:            "AppProject mapping created for ORG-scope agent",
 				ObservedGeneration: agentCR.GetGeneration(),
 			})
 			if err := r.Status().Update(ctx, agentCR); err != nil {
 				return ctrl.Result{}, err
 			}
-			log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
-			// Update secret with ArgoProject ID so ApplicationSets can consume it.
-			if err := r.upsertArgoProjectIdInSecret(ctx, agentCR, tokenSecretName, argoProjectId); err != nil {
-				log.Error(err, "Failed to update secret with ArgoProject ID")
-				return ctrl.Result{}, err
+			log.Info("Created AppProject mapping for ORG-scope agent", "argoProjectName", argoProjectName, "project", agentCR.Spec.ProjectId)
+			if tokenSecretName != "" {
+				if err := r.upsertArgoProjectIdInSecret(ctx, agentCR, tokenSecretName, argoProjectName); err != nil {
+					log.Error(err, "Failed to update secret with ArgoProject ID")
+					return ctrl.Result{}, err
+				}
 			}
-
-			// Patch the ArgoCD cluster registration secret if configured.
 			if agentCR.Spec.ClusterSecretPatch != nil && !agentCR.Status.ClusterSecretPatched {
-				if err := r.patchClusterRegistrationSecret(ctx, agentCR, argoProjectId); err != nil {
+				if err := r.patchClusterRegistrationSecret(ctx, agentCR, argoProjectName); err != nil {
 					log.Error(err, "Failed to patch cluster registration secret",
 						"secret", agentCR.Spec.ClusterSecretPatch.Name)
 					return ctrl.Result{}, err
@@ -315,10 +380,74 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				}
 				log.Info("Patched cluster registration secret",
 					"secret", agentCR.Spec.ClusterSecretPatch.Name,
-					"argoProjectId", argoProjectId,
+					"argoProjectId", argoProjectName,
 					"enableAgent", agentCR.Spec.ClusterSecretPatch.EnableAgent)
 			}
+		} else if !isOrgOrAccount {
+			// PROJECT scope: Harness auto-creates the mapping after cluster registration; fetch it.
+			argoProjectId, err := r.fetchArgoProjectId(harnessSession, agentCR, agentAPIIdentifier)
+			if err != nil {
+				if stderrors.Is(err, errArgoProjectMappingNotFound) || stderrors.Is(err, errArgoProjectScopeMismatch) {
+					if clusterRegEnabled && agentCR.Status.ClusterIdentifier != "" {
+						reason := "MappingNotFound"
+						if stderrors.Is(err, errArgoProjectScopeMismatch) {
+							reason = "ScopeMismatch"
+						}
+						apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
+							Type:               argoProjectResolvedConditionType,
+							Status:             metav1.ConditionFalse,
+							Reason:             reason,
+							Message:            err.Error(),
+							ObservedGeneration: agentCR.GetGeneration(),
+						})
+						if updateErr := r.Status().Update(ctx, agentCR); updateErr != nil {
+							return ctrl.Result{}, updateErr
+						}
+						log.Info("Argo project mapping not ready; requeueing", "reason", reason, "details", err.Error())
+						return ctrl.Result{Requeue: true}, nil
+					}
+					return ctrl.Result{}, nil
+				}
+				log.Error(err, "Failed to fetch ArgoProject ID from Harness")
+				return ctrl.Result{}, err
+			}
+			if argoProjectId != "" {
+				agentCR.Status.ArgoProjectId = argoProjectId
+				apimeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
+					Type:               argoProjectResolvedConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Resolved",
+					Message:            "Argo project mapping resolved via Harness API",
+					ObservedGeneration: agentCR.GetGeneration(),
+				})
+				if err := r.Status().Update(ctx, agentCR); err != nil {
+					return ctrl.Result{}, err
+				}
+				log.Info("Stored ArgoCD AppProject ID in status", "argoProjectId", argoProjectId)
+				if tokenSecretName != "" {
+					if err := r.upsertArgoProjectIdInSecret(ctx, agentCR, tokenSecretName, argoProjectId); err != nil {
+						log.Error(err, "Failed to update secret with ArgoProject ID")
+						return ctrl.Result{}, err
+					}
+				}
+				if agentCR.Spec.ClusterSecretPatch != nil && !agentCR.Status.ClusterSecretPatched {
+					if err := r.patchClusterRegistrationSecret(ctx, agentCR, argoProjectId); err != nil {
+						log.Error(err, "Failed to patch cluster registration secret",
+							"secret", agentCR.Spec.ClusterSecretPatch.Name)
+						return ctrl.Result{}, err
+					}
+					agentCR.Status.ClusterSecretPatched = true
+					if err := r.Status().Update(ctx, agentCR); err != nil {
+						return ctrl.Result{}, err
+					}
+					log.Info("Patched cluster registration secret",
+						"secret", agentCR.Spec.ClusterSecretPatch.Name,
+						"argoProjectId", argoProjectId,
+						"enableAgent", agentCR.Spec.ClusterSecretPatch.EnableAgent)
+				}
+			}
 		}
+		// ORG/ACCOUNT with empty projectId: skip — nothing to map.
 	}
 
 	return ctrl.Result{}, nil
@@ -402,8 +531,8 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 		agentIdentifier,
 		&nextgen.ClustersApiAgentClusterServiceCreateOpts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
 			Identifier:        optional.NewString(clusterIdentifierStr),
 		},
 	)
@@ -436,8 +565,8 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 		agentIdentifier,
 		agentCR.Spec.AccountId,
 		&nextgen.AgentsApiAgentServiceForServerGetOpts{
-			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
 			Scope:             optional.NewString(agentCR.Spec.Scope),
 			WithCredentials:   optional.NewBool(true),
 		},
@@ -540,8 +669,8 @@ func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
 		agentIdentifier,
 		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
 		},
 	)
 	if v2Err == nil {
@@ -561,8 +690,8 @@ func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
 		agentIdentifier,
 		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingListByAgentOpts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optional.NewString(agentCR.Spec.OrgId),
-			ProjectIdentifier: optional.NewString(agentCR.Spec.ProjectId),
+			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
 		},
 	)
 	if v1Err != nil {
@@ -580,6 +709,39 @@ func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
 		return "", selErr
 	}
 	return projectID, nil
+}
+
+// createAppProjectMapping calls AppProjectMappingServiceCreateV2 to map an existing in-cluster
+// ArgoCD AppProject to the Harness project in agentCR.Spec.ProjectId using an already-running agent.
+// Returns the mapping Identifier on success, or empty string if the mapping already exists.
+func (r *HarnessGitopsAgentReconciler) createAppProjectMapping(
+	ctx context.Context,
+	session *HarnessSession,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentIdentifier string,
+	argoProjectName string,
+) (string, error) {
+	resp, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceCreateV2(
+		session.AuthCtx,
+		nextgen.V1AppProjectMappingCreateRequestV2{
+			AgentIdentifier:   agentIdentifier,
+			AccountIdentifier: agentCR.Spec.AccountId,
+			OrgIdentifier:     agentCR.Spec.OrgId,
+			ProjectIdentifier: agentCR.Spec.ProjectId,
+			ArgoProjectName:   argoProjectName,
+		},
+		agentIdentifier,
+	)
+	if err != nil {
+		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+			if strings.Contains(strings.ToLower(string(swaggerErr.Body())), "already exists") {
+				return "", nil
+			}
+			return "", fmt.Errorf("createAppProjectMapping failed: %w (body: %s)", err, string(swaggerErr.Body()))
+		}
+		return "", fmt.Errorf("createAppProjectMapping failed: %w", err)
+	}
+	return resp.Identifier, nil
 }
 
 // upsertArgoProjectIdInSecret updates an existing token secret to add/update the ARGO_PROJECT_ID key.
@@ -630,6 +792,32 @@ func (r *HarnessGitopsAgentReconciler) patchClusterRegistrationSecret(
 	updated.Labels["enable_agent"] = patch.EnableAgent
 
 	return r.Patch(ctx, updated, client.MergeFrom(secret))
+}
+
+// optionalStr returns optional.NewString(s) when s is non-empty, otherwise
+// optional.EmptyString(). Use this for OrgId/ProjectId which are omitted at
+// ORG or ACCOUNT scope so the Harness API does not receive an empty string.
+func optionalStr(s string) optional.String {
+	if s == "" {
+		return optional.EmptyString()
+	}
+	return optional.NewString(s)
+}
+
+// scopedAgentIdentifier normalizes the path identifier expected by GitOps APIs.
+// Harness org-scope agents are addressed as "org.<identifier>".
+func scopedAgentIdentifier(scope string, identifier string) string {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return ""
+	}
+	if strings.Contains(id, ".") {
+		return id
+	}
+	if strings.EqualFold(scope, "ORG") {
+		return "org." + id
+	}
+	return id
 }
 
 func isHarnessAgentNotFound(err error) bool {
