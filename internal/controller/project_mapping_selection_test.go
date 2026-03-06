@@ -104,9 +104,37 @@ func TestScopedAgentIdentifier_AlreadyPrefixedUnchanged(t *testing.T) {
 	}
 }
 
+func TestScopedAgentIdentifier_OrgLikeIdentifierWithoutDotUnchanged(t *testing.T) {
+	got := scopedAgentIdentifier("ORG", "orggitopsagent")
+	if got != "orggitopsagent" {
+		t.Fatalf("expected org-like identifier to remain unchanged, got %q", got)
+	}
+}
+
 func TestScopedAgentIdentifier_ProjectScopeUnchanged(t *testing.T) {
 	got := scopedAgentIdentifier("PROJECT", "my-agent")
 	if got != "my-agent" {
 		t.Fatalf("expected project scope identifier to remain unchanged, got %q", got)
+	}
+}
+
+func TestScopedAgentIdentifier_AccountScopeAddsPrefix(t *testing.T) {
+	got := scopedAgentIdentifier("ACCOUNT", "my-agent")
+	if got != "account.my-agent" {
+		t.Fatalf("expected account-prefixed identifier, got %q", got)
+	}
+}
+
+func TestScopedAgentIdentifier_AccountScopeAlreadyPrefixedUnchanged(t *testing.T) {
+	got := scopedAgentIdentifier("ACCOUNT", "account.my-agent")
+	if got != "account.my-agent" {
+		t.Fatalf("expected existing account-prefixed identifier to remain unchanged, got %q", got)
+	}
+}
+
+func TestScopedAgentIdentifier_AccountLikeIdentifierWithoutDotUnchanged(t *testing.T) {
+	got := scopedAgentIdentifier("ACCOUNT", "accountgitopsagent")
+	if got != "accountgitopsagent" {
+		t.Fatalf("expected account-like identifier to remain unchanged, got %q", got)
 	}
 }

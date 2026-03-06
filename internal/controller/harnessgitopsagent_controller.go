@@ -249,16 +249,21 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 		resp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerCreate(harnessSession.AuthCtx, *createReq)
 		if err != nil {
-			log.Error(err, "Harness API Call Failed")
-			if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-				log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
+			if isHarnessAgentAlreadyExists(err) {
+				agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.Identifier)
+				log.Info("Harness GitOps Agent already exists; continuing with existing identifier", "AgentID", agentIdentifier)
+			} else {
+				log.Error(err, "Harness API Call Failed")
+				if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+					log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
+				}
+				return ctrl.Result{}, err
 			}
-			return ctrl.Result{}, err
+		} else {
+			agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, resp.Identifier)
+			agentCredentials = resp.Credentials
+			log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
 		}
-
-		agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, resp.Identifier)
-		agentCredentials = resp.Credentials
-		log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
 
 		agentCR.Status.AgentIdentifier = agentIdentifier
 		if err := r.Status().Update(ctx, agentCR); err != nil {
@@ -572,7 +577,10 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 		},
 	)
 	if getErr != nil {
-		return "", getErr
+		return "", wrapHarnessAPIError(
+			fmt.Sprintf("get agent %q failed", agentIdentifier),
+			getErr,
+		)
 	}
 
 	// Extract token from GET response if not already resolved.
@@ -587,7 +595,10 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 			agentIdentifier,
 		)
 		if regenErr != nil {
-			return "", regenErr
+			return "", wrapHarnessAPIError(
+				fmt.Sprintf("regenerate credentials for agent %q failed", agentIdentifier),
+				regenErr,
+			)
 		}
 		if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
 			return "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
@@ -805,7 +816,8 @@ func optionalStr(s string) optional.String {
 }
 
 // scopedAgentIdentifier normalizes the path identifier expected by GitOps APIs.
-// Harness org-scope agents are addressed as "org.<identifier>".
+// If users already provide a scope-shaped identifier (for example "orggitopsagent"
+// or "accountgitopsagent"), keep it as-is and avoid forcing a dot-delimited prefix.
 func scopedAgentIdentifier(scope string, identifier string) string {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
@@ -814,10 +826,33 @@ func scopedAgentIdentifier(scope string, identifier string) string {
 	if strings.Contains(id, ".") {
 		return id
 	}
+	lowerID := strings.ToLower(id)
 	if strings.EqualFold(scope, "ORG") {
+		if strings.HasPrefix(lowerID, "org") {
+			return id
+		}
 		return "org." + id
 	}
+	if strings.EqualFold(scope, "ACCOUNT") {
+		if strings.HasPrefix(lowerID, "account") {
+			return id
+		}
+		return "account." + id
+	}
 	return id
+}
+
+func wrapHarnessAPIError(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+		body := strings.TrimSpace(string(swaggerErr.Body()))
+		if body != "" {
+			return fmt.Errorf("%s: %w (body: %s)", message, err, body)
+		}
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }
 
 func isHarnessAgentNotFound(err error) bool {
@@ -827,6 +862,15 @@ func isHarnessAgentNotFound(err error) bool {
 	}
 	body := strings.ToLower(string(swaggerErr.Body()))
 	return strings.Contains(body, "agent not found")
+}
+
+func isHarnessAgentAlreadyExists(err error) bool {
+	swaggerErr, ok := err.(nextgen.GenericSwaggerError)
+	if !ok {
+		return false
+	}
+	body := strings.ToLower(string(swaggerErr.Body()))
+	return strings.Contains(body, "agent already exists")
 }
 
 func selectArgoProjectIDFromV2Mappings(
