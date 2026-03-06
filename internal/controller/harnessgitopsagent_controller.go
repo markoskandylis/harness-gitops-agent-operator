@@ -154,7 +154,9 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	clusterDone := !clusterRegEnabled || agentCR.Status.ClusterIdentifier != ""
 	argoProjectDone := agentCR.Status.ArgoProjectId != ""
 
-	if agentDone && clusterDone && argoProjectDone {
+	secretPatched := agentCR.Spec.ClusterSecretPatch == nil || agentCR.Status.ClusterSecretPatched
+
+	if agentDone && clusterDone && argoProjectDone && secretPatched {
 		return ctrl.Result{}, nil
 	}
 
@@ -298,6 +300,23 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if err := r.upsertArgoProjectIdInSecret(ctx, agentCR, tokenSecretName, argoProjectId); err != nil {
 				log.Error(err, "Failed to update secret with ArgoProject ID")
 				return ctrl.Result{}, err
+			}
+
+			// Patch the ArgoCD cluster registration secret if configured.
+			if agentCR.Spec.ClusterSecretPatch != nil && !agentCR.Status.ClusterSecretPatched {
+				if err := r.patchClusterRegistrationSecret(ctx, agentCR, argoProjectId); err != nil {
+					log.Error(err, "Failed to patch cluster registration secret",
+						"secret", agentCR.Spec.ClusterSecretPatch.Name)
+					return ctrl.Result{}, err
+				}
+				agentCR.Status.ClusterSecretPatched = true
+				if err := r.Status().Update(ctx, agentCR); err != nil {
+					return ctrl.Result{}, err
+				}
+				log.Info("Patched cluster registration secret",
+					"secret", agentCR.Spec.ClusterSecretPatch.Name,
+					"argoProjectId", argoProjectId,
+					"enableAgent", agentCR.Spec.ClusterSecretPatch.EnableAgent)
 			}
 		}
 	}
@@ -579,6 +598,38 @@ func (r *HarnessGitopsAgentReconciler) upsertArgoProjectIdInSecret(
 	}
 	existing.Data[argoProjectIdSecretKey] = []byte(argoProjectId)
 	return r.Update(ctx, existing)
+}
+
+// patchClusterRegistrationSecret patches the ArgoCD cluster registration secret
+// referenced by spec.clusterSecretPatch with the resolved ArgoProject ID annotation
+// and the enable_agent label.
+func (r *HarnessGitopsAgentReconciler) patchClusterRegistrationSecret(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	argoProjectId string,
+) error {
+	patch := agentCR.Spec.ClusterSecretPatch
+	ns := patch.Namespace
+	if ns == "" {
+		ns = agentCR.Namespace
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: patch.Name, Namespace: ns}, secret); err != nil {
+		return fmt.Errorf("cluster registration secret %s/%s not found: %w", ns, patch.Name, err)
+	}
+
+	updated := secret.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	if updated.Labels == nil {
+		updated.Labels = map[string]string{}
+	}
+	updated.Annotations["harness_argo_project_id"] = argoProjectId
+	updated.Labels["enable_agent"] = patch.EnableAgent
+
+	return r.Patch(ctx, updated, client.MergeFrom(secret))
 }
 
 func isHarnessAgentNotFound(err error) bool {

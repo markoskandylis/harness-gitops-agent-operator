@@ -20,6 +20,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ClusterSecretPatchSpec defines an ArgoCD cluster registration secret to patch
+// once the agent registration and ArgoProject ID are resolved.
+type ClusterSecretPatchSpec struct {
+	// Name of the ArgoCD cluster registration secret to patch.
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Namespace of the secret. Defaults to the CR namespace if omitted.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// EnableAgent sets the enable_agent label value on the secret.
+	// Use "true" to activate ApplicationSets targeting this cluster.
+	// +kubebuilder:validation:Enum="true";"false"
+	// +kubebuilder:default:="false"
+	EnableAgent string `json:"enableAgent"`
+}
+
 // ClusterRegistrationSpec defines how the controller registers the cluster
 // that this agent runs on (or connects to) with the Harness GitOps Clusters API.
 // Registering a cluster is what triggers Harness to create the ArgoCD AppProject
@@ -110,6 +128,12 @@ type HarnessGitopsAgentSpec struct {
 	// which makes the agent and its Applications visible in the Harness UI.
 	// +optional
 	ClusterRegistration *ClusterRegistrationSpec `json:"clusterRegistration,omitempty"`
+
+	// ClusterSecretPatch optionally references an ArgoCD cluster registration secret
+	// on the same cluster. After the ArgoProject ID is resolved, the controller patches
+	// the secret with harness_argo_project_id annotation and enable_agent label.
+	// +optional
+	ClusterSecretPatch *ClusterSecretPatchSpec `json:"clusterSecretPatch,omitempty"`
 }
 
 // HarnessGitopsAgentStatus defines the observed state of HarnessGitopsAgent.
@@ -125,6 +149,11 @@ type HarnessGitopsAgentStatus struct {
 	// creates and maps to this agent's Harness project after cluster registration.
 	// Used as the `project:` field in ApplicationSets and Applications.
 	ArgoProjectId string `json:"argoProjectId,omitempty"`
+
+	// ClusterSecretPatched is true once the referenced cluster registration secret
+	// has been successfully patched with harness_argo_project_id and enable_agent.
+	// +optional
+	ClusterSecretPatched bool `json:"clusterSecretPatched,omitempty"`
 
 	// Conditions store the detailed state transitions.
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
