@@ -528,27 +528,43 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 	// Derive a Harness-safe identifier (alphanumeric + underscore, starts with letter/underscore).
 	clusterIdentifierStr := toHarnessIdentifier(clusterName)
 
-	log.Info("Registering cluster with Harness", "server", server, "connectionType", connectionType, "identifier", clusterIdentifierStr)
-
-	clusterResp, _, err := harnessSession.Client.ClustersApi.AgentClusterServiceCreate(
-		harnessSession.AuthCtx,
-		createReq,
-		agentIdentifier,
-		&nextgen.ClustersApiAgentClusterServiceCreateOpts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
-			Identifier:        optional.NewString(clusterIdentifierStr),
-		},
-	)
-	if err != nil {
-		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-			return "", fmt.Errorf("cluster registration failed: %w (body: %s)", err, string(swaggerErr.Body()))
-		}
-		return "", fmt.Errorf("cluster registration failed: %w", err)
+	candidates := scopedPathAgentIdentifierCandidates(agentCR.Spec.Scope, agentIdentifier)
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("cluster registration failed: empty agent identifier")
 	}
 
-	return clusterResp.Identifier, nil
+	log.Info(
+		"Registering cluster with Harness",
+		"server", server,
+		"connectionType", connectionType,
+		"identifier", clusterIdentifierStr,
+		"agentIdentifierCandidates", candidates,
+	)
+
+	var lastErr error
+	for _, candidate := range candidates {
+		clusterResp, _, callErr := harnessSession.Client.ClustersApi.AgentClusterServiceCreate(
+			harnessSession.AuthCtx,
+			createReq,
+			candidate,
+			&nextgen.ClustersApiAgentClusterServiceCreateOpts{
+				AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
+				OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
+				ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
+				Identifier:        optional.NewString(clusterIdentifierStr),
+			},
+		)
+		if callErr == nil {
+			return clusterResp.Identifier, nil
+		}
+		lastErr = fmt.Errorf(
+			"cluster registration failed for agentIdentifier=%q: %s",
+			candidate,
+			harnessAPIErrorDetails(callErr),
+		)
+	}
+
+	return "", lastErr
 }
 
 // resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN),
@@ -732,27 +748,40 @@ func (r *HarnessGitopsAgentReconciler) createAppProjectMapping(
 	agentIdentifier string,
 	argoProjectName string,
 ) (string, error) {
-	resp, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceCreateV2(
-		session.AuthCtx,
-		nextgen.V1AppProjectMappingCreateRequestV2{
-			AgentIdentifier:   agentIdentifier,
-			AccountIdentifier: agentCR.Spec.AccountId,
-			OrgIdentifier:     agentCR.Spec.OrgId,
-			ProjectIdentifier: agentCR.Spec.ProjectId,
-			ArgoProjectName:   argoProjectName,
-		},
-		agentIdentifier,
-	)
-	if err != nil {
+	candidates := scopedPathAgentIdentifierCandidates(agentCR.Spec.Scope, agentIdentifier)
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("createAppProjectMapping failed: empty agent identifier")
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		resp, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceCreateV2(
+			session.AuthCtx,
+			nextgen.V1AppProjectMappingCreateRequestV2{
+				AgentIdentifier:   candidate,
+				AccountIdentifier: agentCR.Spec.AccountId,
+				OrgIdentifier:     agentCR.Spec.OrgId,
+				ProjectIdentifier: agentCR.Spec.ProjectId,
+				ArgoProjectName:   argoProjectName,
+			},
+			candidate,
+		)
+		if err == nil {
+			return resp.Identifier, nil
+		}
 		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-			if strings.Contains(strings.ToLower(string(swaggerErr.Body())), "already exists") {
+			body := strings.ToLower(string(swaggerErr.Body()))
+			if strings.Contains(body, "already exists") {
 				return "", nil
 			}
-			return "", fmt.Errorf("createAppProjectMapping failed: %w (body: %s)", err, string(swaggerErr.Body()))
 		}
-		return "", fmt.Errorf("createAppProjectMapping failed: %w", err)
+		lastErr = fmt.Errorf(
+			"createAppProjectMapping failed for agentIdentifier=%q: %s",
+			candidate,
+			harnessAPIErrorDetails(err),
+		)
 	}
-	return resp.Identifier, nil
+	return "", lastErr
 }
 
 // upsertArgoProjectIdInSecret updates an existing token secret to add/update the ARGO_PROJECT_ID key.
@@ -828,6 +857,48 @@ func optionalProjectIdentifierForAgentScope(scope string, projectID string) opti
 	return optionalStr(projectIdentifierForAgentScope(scope, projectID))
 }
 
+// scopedPathAgentIdentifierCandidates returns agent identifier variants used by APIs
+// that take the identifier in the URL path. Harness often expects ORG/ACCOUNT agents
+// as "org.<id>" / "account.<id>" on these endpoints, while other endpoints accept raw IDs.
+func scopedPathAgentIdentifierCandidates(scope string, identifier string) []string {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return nil
+	}
+
+	candidates := make([]string, 0, 2)
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == v {
+				return
+			}
+		}
+		candidates = append(candidates, v)
+	}
+
+	if strings.Contains(id, ".") {
+		add(id)
+		parts := strings.SplitN(id, ".", 2)
+		if len(parts) == 2 {
+			add(parts[1])
+		}
+		return candidates
+	}
+
+	switch {
+	case strings.EqualFold(scope, "ORG"):
+		add("org." + id)
+	case strings.EqualFold(scope, "ACCOUNT"):
+		add("account." + id)
+	}
+	add(id)
+	return candidates
+}
+
 // scopedAgentIdentifier keeps the exact identifier shape provided by users/SDK.
 // Do not force org/account prefixes here; Harness may return non-dot-scoped IDs.
 func scopedAgentIdentifier(scope string, identifier string) string {
@@ -849,6 +920,19 @@ func wrapHarnessAPIError(message string, err error) error {
 		}
 	}
 	return fmt.Errorf("%s: %w", message, err)
+}
+
+func harnessAPIErrorDetails(err error) string {
+	if err == nil {
+		return ""
+	}
+	if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+		body := strings.TrimSpace(string(swaggerErr.Body()))
+		if body != "" {
+			return fmt.Sprintf("%v (body: %s)", err, body)
+		}
+	}
+	return err.Error()
 }
 
 func isHarnessAgentNotFound(err error) bool {

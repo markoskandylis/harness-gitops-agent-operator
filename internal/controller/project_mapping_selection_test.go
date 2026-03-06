@@ -139,6 +139,34 @@ func TestScopedAgentIdentifier_AccountLikeIdentifierWithoutDotUnchanged(t *testi
 	}
 }
 
+func TestScopedPathAgentIdentifierCandidates_OrgScope(t *testing.T) {
+	got := scopedPathAgentIdentifierCandidates("ORG", "hubagent")
+	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != "hubagent" {
+		t.Fatalf("unexpected ORG candidates: %#v", got)
+	}
+}
+
+func TestScopedPathAgentIdentifierCandidates_AccountScope(t *testing.T) {
+	got := scopedPathAgentIdentifierCandidates("ACCOUNT", "hubagent")
+	if len(got) != 2 || got[0] != "account.hubagent" || got[1] != "hubagent" {
+		t.Fatalf("unexpected ACCOUNT candidates: %#v", got)
+	}
+}
+
+func TestScopedPathAgentIdentifierCandidates_PrefixedInput(t *testing.T) {
+	got := scopedPathAgentIdentifierCandidates("ORG", "org.hubagent")
+	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != "hubagent" {
+		t.Fatalf("unexpected prefixed candidates: %#v", got)
+	}
+}
+
+func TestScopedPathAgentIdentifierCandidates_ProjectScope(t *testing.T) {
+	got := scopedPathAgentIdentifierCandidates("PROJECT", "hubagent")
+	if len(got) != 1 || got[0] != "hubagent" {
+		t.Fatalf("unexpected PROJECT candidates: %#v", got)
+	}
+}
+
 func TestProjectIdentifierForAgentScope_ProjectKeepsProjectID(t *testing.T) {
 	got := projectIdentifierForAgentScope("PROJECT", "my-project")
 	if got != "my-project" {
