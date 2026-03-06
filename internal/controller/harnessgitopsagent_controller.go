@@ -150,7 +150,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
 					AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 					OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-					ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
+					ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
 					Name:              optional.NewString(agentCR.Spec.Name),
 					Type_:             optional.NewString(agentCR.Spec.Type),
 					Scope:             optional.NewString(agentCR.Spec.Scope),
@@ -238,7 +238,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Operator:          &gitopsOperator,
 			AccountIdentifier: agentCR.Spec.AccountId,
 			OrgIdentifier:     agentCR.Spec.OrgId,
-			ProjectIdentifier: agentCR.Spec.ProjectId,
+			ProjectIdentifier: projectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
 			Type_:             &gitopsAgentType,
 			Scope:             &gitopsAgentScope,
 			Metadata: &nextgen.V1AgentMetadata{
@@ -537,7 +537,7 @@ func (r *HarnessGitopsAgentReconciler) registerCluster(
 		&nextgen.ClustersApiAgentClusterServiceCreateOpts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
+			ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
 			Identifier:        optional.NewString(clusterIdentifierStr),
 		},
 	)
@@ -571,7 +571,7 @@ func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
 		agentCR.Spec.AccountId,
 		&nextgen.AgentsApiAgentServiceForServerGetOpts{
 			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
+			ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
 			Scope:             optional.NewString(agentCR.Spec.Scope),
 			WithCredentials:   optional.NewBool(true),
 		},
@@ -815,29 +815,25 @@ func optionalStr(s string) optional.String {
 	return optional.NewString(s)
 }
 
-// scopedAgentIdentifier normalizes the path identifier expected by GitOps APIs.
-// If users already provide a scope-shaped identifier (for example "orggitopsagent"
-// or "accountgitopsagent"), keep it as-is and avoid forcing a dot-delimited prefix.
+// projectIdentifierForAgentScope limits projectIdentifier usage to PROJECT-scope agent APIs.
+// ORG/ACCOUNT agent APIs must omit projectIdentifier; projectId is still used in mapping APIs.
+func projectIdentifierForAgentScope(scope string, projectID string) string {
+	if strings.EqualFold(scope, "PROJECT") {
+		return strings.TrimSpace(projectID)
+	}
+	return ""
+}
+
+func optionalProjectIdentifierForAgentScope(scope string, projectID string) optional.String {
+	return optionalStr(projectIdentifierForAgentScope(scope, projectID))
+}
+
+// scopedAgentIdentifier keeps the exact identifier shape provided by users/SDK.
+// Do not force org/account prefixes here; Harness may return non-dot-scoped IDs.
 func scopedAgentIdentifier(scope string, identifier string) string {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return ""
-	}
-	if strings.Contains(id, ".") {
-		return id
-	}
-	lowerID := strings.ToLower(id)
-	if strings.EqualFold(scope, "ORG") {
-		if strings.HasPrefix(lowerID, "org") {
-			return id
-		}
-		return "org." + id
-	}
-	if strings.EqualFold(scope, "ACCOUNT") {
-		if strings.HasPrefix(lowerID, "account") {
-			return id
-		}
-		return "account." + id
 	}
 	return id
 }

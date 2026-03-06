@@ -90,10 +90,10 @@ func TestSelectArgoProjectIDFromV1Mapping_ScopeMismatch(t *testing.T) {
 	}
 }
 
-func TestScopedAgentIdentifier_OrgScopeAddsPrefix(t *testing.T) {
+func TestScopedAgentIdentifier_OrgScopeKeepsIdentifier(t *testing.T) {
 	got := scopedAgentIdentifier("ORG", "my-agent")
-	if got != "org.my-agent" {
-		t.Fatalf("expected org-prefixed identifier, got %q", got)
+	if got != "my-agent" {
+		t.Fatalf("expected ORG scope identifier to remain unchanged, got %q", got)
 	}
 }
 
@@ -118,10 +118,10 @@ func TestScopedAgentIdentifier_ProjectScopeUnchanged(t *testing.T) {
 	}
 }
 
-func TestScopedAgentIdentifier_AccountScopeAddsPrefix(t *testing.T) {
+func TestScopedAgentIdentifier_AccountScopeKeepsIdentifier(t *testing.T) {
 	got := scopedAgentIdentifier("ACCOUNT", "my-agent")
-	if got != "account.my-agent" {
-		t.Fatalf("expected account-prefixed identifier, got %q", got)
+	if got != "my-agent" {
+		t.Fatalf("expected ACCOUNT scope identifier to remain unchanged, got %q", got)
 	}
 }
 
@@ -136,5 +136,26 @@ func TestScopedAgentIdentifier_AccountLikeIdentifierWithoutDotUnchanged(t *testi
 	got := scopedAgentIdentifier("ACCOUNT", "accountgitopsagent")
 	if got != "accountgitopsagent" {
 		t.Fatalf("expected account-like identifier to remain unchanged, got %q", got)
+	}
+}
+
+func TestProjectIdentifierForAgentScope_ProjectKeepsProjectID(t *testing.T) {
+	got := projectIdentifierForAgentScope("PROJECT", "my-project")
+	if got != "my-project" {
+		t.Fatalf("expected project ID to be kept for PROJECT scope, got %q", got)
+	}
+}
+
+func TestProjectIdentifierForAgentScope_OrgOmitsProjectID(t *testing.T) {
+	got := projectIdentifierForAgentScope("ORG", "my-project")
+	if got != "" {
+		t.Fatalf("expected project ID to be omitted for ORG scope, got %q", got)
+	}
+}
+
+func TestProjectIdentifierForAgentScope_AccountOmitsProjectID(t *testing.T) {
+	got := projectIdentifierForAgentScope("ACCOUNT", "my-project")
+	if got != "" {
+		t.Fatalf("expected project ID to be omitted for ACCOUNT scope, got %q", got)
 	}
 }
