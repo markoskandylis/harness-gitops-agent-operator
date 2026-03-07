@@ -1,0 +1,18 @@
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  name: org-gitops-agent-mapping
+  namespace: gitops-agent
+spec:
+  name: org-gitops-agent-mapping
+  identifier: orggitopsagentmapping
+  accountId: "<ACCOUNT_ID>"
+  orgId: "<ORG_ID>"
+  operator: ARGO
+  scope: ORG
+  type: MANAGED_ARGO_PROVIDER
+  apiKeySecretRef: harness-api-key-secret
+  tokenSecretRef: org-agent-token
+  projectMapping:
+    projectId: "<HARNESS_PROJECT_ID>"
+    AppProject: "<ARGO_APP_PROJECT>"
