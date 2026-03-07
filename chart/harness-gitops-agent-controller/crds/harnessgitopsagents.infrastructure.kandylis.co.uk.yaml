@@ -18,9 +18,6 @@ spec:
     - jsonPath: .status.agentIdentifier
       name: Agent
       type: string
-    - jsonPath: .status.clusterIdentifier
-      name: Cluster
-      type: string
     - jsonPath: .status.argoProjectId
       name: ArgoProject
       type: string
@@ -58,93 +55,10 @@ spec:
                   ApiKeySecretRef is the name of the Secret containing the Harness API Key.
                   Key inside secret must be "api_key".
                 type: string
-              argoProjectName:
-                description: |-
-                  ArgoProjectName is the name of the existing in-cluster ArgoCD AppProject to map
-                  to the Harness project in spec.projectId.
-                  Required when ExistingAgentIdentifier is set.
-                  Required when scope is ORG or ACCOUNT and projectId is set (used to create the primary mapping).
-                type: string
-              clusterRegistration:
-                description: |-
-                  ClusterRegistration controls whether the controller registers a cluster with
-                  Harness after agent creation. This is required to trigger AppProject creation,
-                  which makes the agent and its Applications visible in the Harness UI.
-                properties:
-                  connectionType:
-                    default: IN_CLUSTER
-                    description: |-
-                      ConnectionType determines the authentication method.
-                        IN_CLUSTER      — agent runs inside the cluster being registered (default).
-                                          Uses https://kubernetes.default.svc, no credentials needed.
-                        SERVICE_ACCOUNT — remote cluster; requires CredentialsRef with bearerToken + caData.
-                    enum:
-                    - IN_CLUSTER
-                    - SERVICE_ACCOUNT
-                    type: string
-                  credentialsRef:
-                    description: |-
-                      CredentialsRef is the name of a Secret in the same namespace containing
-                      credentials for SERVICE_ACCOUNT connection type.
-                      Supported keys:
-                        bearerToken — Kubernetes service account token (required for SERVICE_ACCOUNT)
-                        caData      — base64-encoded PEM CA certificate bundle
-                        insecure    — "true" to skip TLS verification (local/dev only)
-                    type: string
-                  enabled:
-                    default: false
-                    description: |-
-                      Enabled controls whether the controller registers a cluster after agent creation.
-                      Defaults to false. Set to true to trigger AppProject creation automatically.
-                    type: boolean
-                  name:
-                    description: |-
-                      Name is the display name for this cluster in Harness.
-                      Defaults to the HarnessGitopsAgent CR name if not set.
-                    type: string
-                  server:
-                    default: https://kubernetes.default.svc
-                    description: |-
-                      Server is the Kubernetes API server URL to register.
-                      Defaults to "https://kubernetes.default.svc" (in-cluster).
-                      For remote clusters use the external API server URL.
-                    type: string
-                required:
-                - enabled
-                type: object
-              clusterSecretPatch:
-                description: |-
-                  ClusterSecretPatch optionally references an ArgoCD cluster registration secret
-                  on the same cluster. After the ArgoProject ID is resolved, the controller patches
-                  the secret with harness_argo_project_id annotation and enable_agent label.
-                properties:
-                  enableAgent:
-                    default: "false"
-                    description: |-
-                      EnableAgent sets the enable_agent label value on the secret.
-                      Use "true" to activate ApplicationSets targeting this cluster.
-                    enum:
-                    - "true"
-                    - "false"
-                    type: string
-                  name:
-                    description: Name of the ArgoCD cluster registration secret to
-                      patch.
-                    type: string
-                  namespace:
-                    description: Namespace of the secret. Defaults to the CR namespace
-                      if omitted.
-                    type: string
-                required:
-                - enableAgent
-                - name
-                type: object
               existingAgentIdentifier:
                 description: |-
                   ExistingAgentIdentifier, if set, skips agent creation and reuses this already-running
-                  agent for cluster registration and AppProject discovery. Use when an ORG/ACCOUNT-scope
-                  agent is already connected and you only need to register a cluster under a new project
-                  to obtain its ArgoProject ID. TokenSecretRef is not required in this mode.
+                  agent for project mapping. TokenSecretRef is not required in this mode.
                 type: string
               identifier:
                 description: Identifier is the unique identifier of the Harness GitOps
@@ -162,6 +76,21 @@ spec:
               projectId:
                 description: ProjectId is the Harness Project Identifier
                 type: string
+              projectMapping:
+                description: |-
+                  ProjectMapping configures explicit Harness project <-> ArgoCD AppProject mapping.
+                  Optional, and supported for ACCOUNT, ORG, or PROJECT scope.
+                properties:
+                  AppProject:
+                    description: |-
+                      AppProject is the ArgoCD AppProject name to map.
+                      Intentionally exported as AppProject to match the requested CR manifest contract.
+                    type: string
+                  projectId:
+                    description: ProjectId is the Harness project identifier to map
+                      to.
+                    type: string
+                type: object
               scope:
                 default: PROJECT
                 description: Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
@@ -169,7 +98,7 @@ spec:
               tokenSecretRef:
                 description: |-
                   TokenSecretRef is the name of the Secret where the generated Agent Token will be stored.
-                  The controller writes GITOPS_AGENT_TOKEN and ARGO_PROJECT_ID into this secret.
+                  The controller writes GITOPS_AGENT_TOKEN into this secret.
                   Not required when ExistingAgentIdentifier is set.
                 type: string
               type:
@@ -195,8 +124,7 @@ spec:
                 type: string
               argoProjectId:
                 description: |-
-                  ArgoProjectId is the ArgoCD AppProject name (random 8-char ID) that Harness
-                  creates and maps to this agent's Harness project after cluster registration.
+                  ArgoProjectId is the mapped ArgoCD AppProject name.
                   Used as the `project:` field in ApplicationSets and Applications.
                 type: string
               argoProjectMappingId:
@@ -204,16 +132,6 @@ spec:
                   ArgoProjectMappingId is the identifier returned by Harness after the AppProject
                   mapping is created via AppProjectMappingServiceCreateV2. Used as an idempotency guard.
                 type: string
-              clusterIdentifier:
-                description: |-
-                  ClusterIdentifier is the Harness identifier of the cluster registered via
-                  ClusterRegistration. Populated after successful cluster registration.
-                type: string
-              clusterSecretPatched:
-                description: |-
-                  ClusterSecretPatched is true once the referenced cluster registration secret
-                  has been successfully patched with harness_argo_project_id and enable_agent.
-                type: boolean
               conditions:
                 description: Conditions store the detailed state transitions.
                 items:
