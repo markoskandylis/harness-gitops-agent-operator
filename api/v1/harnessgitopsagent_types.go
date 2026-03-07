@@ -20,6 +20,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// ProjectMappingSpec defines explicit Harness <-> ArgoCD AppProject mapping input.
+type ProjectMappingSpec struct {
+	// ProjectId is the Harness project identifier to map to.
+	// +optional
+	ProjectId string `json:"projectId,omitempty"`
+
+	// AppProject is the ArgoCD AppProject name to map.
+	// Intentionally exported as AppProject to match the requested CR manifest contract.
+	// +optional
+	AppProject string `json:"AppProject,omitempty"`
+}
+
 // HarnessGitopsAgentSpec defines the desired state of HarnessGitopsAgent
 type HarnessGitopsAgentSpec struct {
 	// Name is the name of the Harness GitOps Agent
@@ -55,12 +67,15 @@ type HarnessGitopsAgentSpec struct {
 	// +kubebuilder:default:="PROJECT"
 	Scope string `json:"scope,omitempty"`
 
-	// ArgoProjectName is the name of the existing in-cluster ArgoCD AppProject to map
-	// to the Harness project in spec.projectId.
-	// Required when ExistingAgentIdentifier is set.
-	// Required when scope is ORG or ACCOUNT and projectId is set (used to create the primary mapping).
+	// ExistingAgentIdentifier, if set, skips agent creation and reuses this already-running
+	// agent for project mapping. TokenSecretRef is not required in this mode.
 	// +optional
-	ArgoProjectName string `json:"argoProjectName,omitempty"`
+	ExistingAgentIdentifier string `json:"existingAgentIdentifier,omitempty"`
+
+	// ProjectMapping configures explicit Harness project <-> ArgoCD AppProject mapping.
+	// Optional, and supported for ACCOUNT, ORG, or PROJECT scope.
+	// +optional
+	ProjectMapping *ProjectMappingSpec `json:"projectMapping,omitempty"`
 
 	// ApiKeySecretRef is the name of the Secret containing the Harness API Key.
 	// Key inside secret must be "api_key".
@@ -68,7 +83,7 @@ type HarnessGitopsAgentSpec struct {
 	ApiKeySecretRef string `json:"apiKeySecretRef"`
 
 	// TokenSecretRef is the name of the Secret where the generated Agent Token will be stored.
-	// The controller writes GITOPS_AGENT_TOKEN and ARGO_PROJECT_ID into this secret.
+	// The controller writes GITOPS_AGENT_TOKEN into this secret.
 	// Not required when ExistingAgentIdentifier is set.
 	// +optional
 	TokenSecretRef string `json:"tokenSecretRef,omitempty"`
@@ -79,8 +94,7 @@ type HarnessGitopsAgentStatus struct {
 	// AgentIdentifier is the ID returned by Harness after agent registration.
 	AgentIdentifier string `json:"agentIdentifier,omitempty"`
 
-	// ArgoProjectId is the ArgoCD AppProject name (random 8-char ID) that Harness
-	// creates and maps to this agent's Harness project after cluster registration.
+	// ArgoProjectId is the mapped ArgoCD AppProject name.
 	// Used as the `project:` field in ApplicationSets and Applications.
 	ArgoProjectId string `json:"argoProjectId,omitempty"`
 
@@ -96,7 +110,6 @@ type HarnessGitopsAgentStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.status.agentIdentifier`
-// +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=`.status.clusterIdentifier`
 // +kubebuilder:printcolumn:name="ArgoProject",type=string,JSONPath=`.status.argoProjectId`
 
 // HarnessGitopsAgent is the Schema for the harnessgitopsagents API
