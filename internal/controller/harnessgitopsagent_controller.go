@@ -178,8 +178,13 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	mappingDone := !needsMapping ||
 		agentCR.Status.ArgoProjectMappingId != "" ||
 		agentCR.Status.ArgoProjectId != ""
+	tokenSecretName := agentCR.Spec.TokenSecretRef
+	if tokenSecretName == "" {
+		tokenSecretName = agentCR.Name + "-agent-token"
+	}
+	tokenSecretReady := existingAgentMode || r.tokenSecretExists(ctx, agentCR, tokenSecretName)
 
-	if agentDone && argoProjectDone && mappingDone {
+	if agentDone && argoProjectDone && mappingDone && tokenSecretReady {
 		return ctrl.Result{}, nil
 	}
 
@@ -227,13 +232,9 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// 6. WRITE TOKEN SECRET — skipped in existing-agent mode (agent already has a token).
-	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if agentCR.Spec.ExistingAgentIdentifier == "" {
-		if tokenSecretName == "" {
-			tokenSecretName = agentCR.Name + "-agent-token"
-		}
 		// Skip if already written to avoid invalidating the running agent.
-		if !r.tokenSecretExists(ctx, agentCR, tokenSecretName) {
+		if !tokenSecretReady {
 			agentToken, err := r.resolveAgentDetails(harnessSession, agentCR, agentIdentifier, agentCredentials)
 			if err != nil {
 				log.Error(err, "Failed to resolve agent token from Harness")
