@@ -18,16 +18,13 @@ package controller
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	// 1. KUBERNETES IMPORTS
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -46,12 +43,6 @@ import (
 const harnessAgentFinalizer = "infrastructure.kandylis.co.uk/finalizer"
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
-const argoProjectResolvedConditionType = "ArgoProjectResolved"
-
-var (
-	errArgoProjectMappingNotFound = stderrors.New("argo project mapping not found")
-	errArgoProjectScopeMismatch   = stderrors.New("argo project mapping scope mismatch")
-)
 
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
@@ -113,27 +104,15 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 						log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
 						return ctrl.Result{}, err
 					}
-					_, _, delErr := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
-						harnessSession.AuthCtx,
-						scopedAgentIdentifier(agentCR.Spec.Scope, existingAgentIdentifier),
+					if err := r.deleteAppProjectMapping(
+						harnessSession,
+						agentCR,
+						existingAgentIdentifier,
 						agentCR.Status.ArgoProjectMappingId,
-						&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
-							AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-							OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-							ProjectIdentifier: optionalStr(mappingProjectID),
-						},
-					)
-					if delErr != nil {
-						if swaggerErr, ok := delErr.(nextgen.GenericSwaggerError); ok {
-							body := strings.ToLower(string(swaggerErr.Body()))
-							if !strings.Contains(body, "not found") {
-								log.Error(delErr, "Failed to delete AppProject mapping; retaining finalizer")
-								return ctrl.Result{}, delErr
-							}
-						} else {
-							log.Error(delErr, "Failed to delete AppProject mapping; retaining finalizer")
-							return ctrl.Result{}, delErr
-						}
+						mappingProjectID,
+					); err != nil {
+						log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
+						return ctrl.Result{}, err
 					}
 				}
 
@@ -160,19 +139,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
 			}
 
-			agentAPIIdentifier := scopedAgentIdentifier(agentCR.Spec.Scope, agentIdentifier)
-			_, _, err = harnessSession.Client.AgentApi.AgentServiceForServerDelete(
-				harnessSession.AuthCtx,
-				agentAPIIdentifier,
-				&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
-					AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-					OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-					ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
-					Name:              optional.NewString(agentCR.Spec.Name),
-					Type_:             optional.NewString(agentCR.Spec.Type),
-					Scope:             optional.NewString(agentCR.Spec.Scope),
-				},
-			)
+			err = r.deleteHarnessAgent(harnessSession, agentCR, agentIdentifier)
 			if err != nil {
 				if isHarnessAgentNotFound(err) {
 					log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
@@ -238,40 +205,18 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	} else if agentIdentifier == "" {
 		log.Info("Registering new Harness GitOps Agent...", "Name", agentCR.Spec.Name)
 
-		gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
-		gitopsAgentScope := nextgen.V1AgentScope(agentCR.Spec.Scope)
-		gitopsOperator := nextgen.V1AgentOperator(agentCR.Spec.Operator)
-
-		createReq := &nextgen.V1Agent{
-			Name:              agentCR.Spec.Name,
-			Identifier:        agentCR.Spec.Identifier,
-			Operator:          &gitopsOperator,
-			AccountIdentifier: agentCR.Spec.AccountId,
-			OrgIdentifier:     agentCR.Spec.OrgId,
-			ProjectIdentifier: projectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
-			Scope:             &gitopsAgentScope,
-			Type_:             &gitopsAgentType,
-			Metadata: &nextgen.V1AgentMetadata{
-				Namespace:        req.Namespace,
-				HighAvailability: false,
-			},
-		}
-
-		resp, _, err := harnessSession.Client.AgentApi.AgentServiceForServerCreate(harnessSession.AuthCtx, *createReq)
+		var alreadyExists bool
+		agentIdentifier, agentCredentials, alreadyExists, err = r.createHarnessAgent(harnessSession, agentCR, req.Namespace)
 		if err != nil {
-			if isHarnessAgentAlreadyExists(err) {
-				agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.Identifier)
-				log.Info("Harness GitOps Agent already exists; continuing with existing identifier", "AgentID", agentIdentifier)
-			} else {
-				log.Error(err, "Harness API Call Failed")
-				if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-					log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
-				}
-				return ctrl.Result{}, err
+			log.Error(err, "Harness API Call Failed")
+			if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+				log.Error(err, "Harness API Response Body", "body", string(swaggerErr.Body()))
 			}
+			return ctrl.Result{}, err
+		}
+		if alreadyExists {
+			log.Info("Harness GitOps Agent already exists; continuing with existing identifier", "AgentID", agentIdentifier)
 		} else {
-			agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, resp.Identifier)
-			agentCredentials = resp.Credentials
 			log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
 		}
 
@@ -331,224 +276,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// resolveAgentDetails returns the agent token (GITOPS_AGENT_TOKEN),
-// falling back to credential regeneration if needed.
-func (r *HarnessGitopsAgentReconciler) resolveAgentDetails(
-	harnessSession *HarnessSession,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	agentIdentifier string,
-	credentials *nextgen.V1AgentCredentials,
-) (agentToken string, err error) {
-	// Fast path: creation response already carried the private key.
-	if credentials != nil && credentials.PrivateKey != "" {
-		agentToken = credentials.PrivateKey
-	}
-
-	// Always GET the full agent record to pick up mappedProjects.
-	getResp, _, getErr := harnessSession.Client.AgentApi.AgentServiceForServerGet(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-		agentCR.Spec.AccountId,
-		&nextgen.AgentsApiAgentServiceForServerGetOpts{
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalProjectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
-			Scope:             optional.NewString(agentCR.Spec.Scope),
-			WithCredentials:   optional.NewBool(true),
-		},
-	)
-	if getErr != nil {
-		return "", wrapHarnessAPIError(
-			fmt.Sprintf("get agent %q failed", agentIdentifier),
-			getErr,
-		)
-	}
-
-	// Extract token from GET response if not already resolved.
-	if agentToken == "" && getResp.Credentials != nil && getResp.Credentials.PrivateKey != "" {
-		agentToken = getResp.Credentials.PrivateKey
-	}
-
-	// Last resort: regenerate credentials if token still empty.
-	if agentToken == "" {
-		regenResp, _, regenErr := harnessSession.Client.AgentApi.AgentServiceForServerRegenerateCredentials(
-			harnessSession.AuthCtx,
-			agentIdentifier,
-		)
-		if regenErr != nil {
-			return "", wrapHarnessAPIError(
-				fmt.Sprintf("regenerate credentials for agent %q failed", agentIdentifier),
-				regenErr,
-			)
-		}
-		if regenResp.Credentials == nil || regenResp.Credentials.PrivateKey == "" {
-			return "", fmt.Errorf("harness API did not return private key for agent %q", agentIdentifier)
-		}
-		agentToken = regenResp.Credentials.PrivateKey
-	}
-
-	return agentToken, nil
-}
-
-func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
-	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	secretName string,
-	agentToken string,
-) error {
-	tokenSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: agentCR.Namespace,
-		},
-	}
-
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tokenSecret, func() error {
-		if err := ctrl.SetControllerReference(agentCR, tokenSecret, r.Scheme); err != nil {
-			return err
-		}
-		tokenSecret.Type = corev1.SecretTypeOpaque
-		if tokenSecret.Data == nil {
-			tokenSecret.Data = map[string][]byte{}
-		}
-		// Consumed by gitops-helm via envFrom(secretRef).
-		// Store exactly as returned by the Harness API (base64-encoded PEM).
-		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
-		return nil
-	})
-	return err
-}
-
-// toHarnessIdentifier converts a string to a Harness-safe identifier
-// by replacing non-alphanumeric characters with underscores and ensuring
-// it starts with a letter or underscore.
-func toHarnessIdentifier(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$' {
-			b[i] = c
-		} else {
-			b[i] = '_'
-		}
-	}
-	// Ensure the identifier starts with a letter or underscore.
-	if len(b) > 0 && b[0] >= '0' && b[0] <= '9' {
-		b = append([]byte{'_'}, b...)
-	}
-	return string(b)
-}
-
-// tokenSecretExists returns true if Secret/<secretName> already has GITOPS_AGENT_TOKEN set.
-func (r *HarnessGitopsAgentReconciler) tokenSecretExists(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent, secretName string) bool {
-	existing := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace}, existing); err != nil {
-		return false
-	}
-	tok, ok := existing.Data[gitopsAgentTokenSecretKey]
-	return ok && len(tok) > 0
-}
-
-// fetchArgoProjectId resolves the Argo AppProject name for an agent by using the
-// latest v2 project-mapping endpoint, with a v1 fallback for compatibility.
-func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
-	harnessSession *HarnessSession,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	agentIdentifier string,
-) (string, error) {
-	v2Resp, _, v2Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingsListByAgentV2(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
-		},
-	)
-	if v2Err == nil {
-		projectID, err := selectArgoProjectIDFromV2Mappings(
-			v2Resp.AppProjectMappings,
-			agentCR.Spec.AccountId,
-			agentCR.Spec.OrgId,
-			agentCR.Spec.ProjectId,
-		)
-		if err == nil {
-			return projectID, nil
-		}
-	}
-
-	v1Resp, _, v1Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingListByAgent(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingListByAgentOpts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
-		},
-	)
-	if v1Err != nil {
-		if v2Err != nil {
-			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback failed: %v", v2Err, v1Err)
-		}
-		return "", v1Err
-	}
-
-	projectID, selErr := selectArgoProjectIDFromV1Mapping(v1Resp.AppProjMap, agentCR.Spec.OrgId, agentCR.Spec.ProjectId)
-	if selErr != nil {
-		if v2Err != nil {
-			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback returned no scoped mapping: %v", v2Err, selErr)
-		}
-		return "", selErr
-	}
-	return projectID, nil
-}
-
-// createAppProjectMapping calls AppProjectMappingServiceCreateV2 to map an existing in-cluster
-// ArgoCD AppProject to a specific Harness project using an already-running agent.
-// Returns the mapping Identifier on success, or empty string if the mapping already exists.
-func (r *HarnessGitopsAgentReconciler) createAppProjectMapping(
-	ctx context.Context,
-	session *HarnessSession,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	agentIdentifier string,
-	argoProjectName string,
-	projectId string,
-) (string, error) {
-	candidates := scopedPathAgentIdentifierCandidates(agentCR.Spec.Scope, agentIdentifier)
-	if len(candidates) == 0 {
-		return "", fmt.Errorf("createAppProjectMapping failed: empty agent identifier")
-	}
-
-	var lastErr error
-	for _, candidate := range candidates {
-		resp, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceCreateV2(
-			session.AuthCtx,
-			nextgen.V1AppProjectMappingCreateRequestV2{
-				AgentIdentifier:   candidate,
-				AccountIdentifier: agentCR.Spec.AccountId,
-				OrgIdentifier:     agentCR.Spec.OrgId,
-				ProjectIdentifier: projectId,
-				ArgoProjectName:   argoProjectName,
-			},
-			candidate,
-		)
-		if err == nil {
-			return resp.Identifier, nil
-		}
-		if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-			body := strings.ToLower(string(swaggerErr.Body()))
-			if strings.Contains(body, "already exists") {
-				return "", nil
-			}
-		}
-		lastErr = fmt.Errorf(
-			"createAppProjectMapping failed for agentIdentifier=%q: %s",
-			candidate,
-			harnessAPIErrorDetails(err),
-		)
-	}
-	return "", lastErr
 }
 
 // optionalStr returns optional.NewString(s) when s is non-empty, otherwise
@@ -668,82 +395,6 @@ func isHarnessAgentAlreadyExists(err error) bool {
 	}
 	body := strings.ToLower(string(swaggerErr.Body()))
 	return strings.Contains(body, "agent already exists")
-}
-
-func selectArgoProjectIDFromV2Mappings(
-	mappings []nextgen.V1AppProjectMappingV2,
-	accountID string,
-	orgID string,
-	projectID string,
-) (string, error) {
-	if len(mappings) == 0 {
-		return "", fmt.Errorf("%w: v2 returned no mappings", errArgoProjectMappingNotFound)
-	}
-
-	candidateSet := map[string]struct{}{}
-	scopeMismatch := false
-	for _, mapping := range mappings {
-		if mapping.AccountIdentifier == accountID &&
-			mapping.OrgIdentifier == orgID &&
-			mapping.ProjectIdentifier == projectID {
-			name := strings.TrimSpace(mapping.ArgoProjectName)
-			if name != "" {
-				candidateSet[name] = struct{}{}
-			}
-			continue
-		}
-		scopeMismatch = true
-	}
-
-	if len(candidateSet) == 0 {
-		if scopeMismatch {
-			return "", fmt.Errorf("%w: expected account=%s org=%s project=%s", errArgoProjectScopeMismatch, accountID, orgID, projectID)
-		}
-		return "", fmt.Errorf("%w: no usable argoProjectName for account=%s org=%s project=%s", errArgoProjectMappingNotFound, accountID, orgID, projectID)
-	}
-
-	candidates := make([]string, 0, len(candidateSet))
-	for candidate := range candidateSet {
-		candidates = append(candidates, candidate)
-	}
-	sort.Strings(candidates)
-	return candidates[0], nil
-}
-
-func selectArgoProjectIDFromV1Mapping(
-	appProjMap map[string]nextgen.Servicev1Project,
-	orgID string,
-	projectID string,
-) (string, error) {
-	if len(appProjMap) == 0 {
-		return "", fmt.Errorf("%w: v1 returned empty appProjMap", errArgoProjectMappingNotFound)
-	}
-
-	candidateSet := map[string]struct{}{}
-	scopeMismatch := false
-	for argoProjectID, project := range appProjMap {
-		if project.OrgIdentifier == orgID && project.ProjectIdentifier == projectID {
-			if strings.TrimSpace(argoProjectID) != "" {
-				candidateSet[argoProjectID] = struct{}{}
-			}
-			continue
-		}
-		scopeMismatch = true
-	}
-
-	if len(candidateSet) == 0 {
-		if scopeMismatch {
-			return "", fmt.Errorf("%w: expected org=%s project=%s", errArgoProjectScopeMismatch, orgID, projectID)
-		}
-		return "", fmt.Errorf("%w: no scoped v1 app project mapping for org=%s project=%s", errArgoProjectMappingNotFound, orgID, projectID)
-	}
-
-	candidates := make([]string, 0, len(candidateSet))
-	for candidate := range candidateSet {
-		candidates = append(candidates, candidate)
-	}
-	sort.Strings(candidates)
-	return candidates[0], nil
 }
 
 func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent) (*HarnessSession, error) {
