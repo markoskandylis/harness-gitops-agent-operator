@@ -47,12 +47,12 @@ func (r *HarnessGitopsAgentReconciler) createHarnessAgent(
 	resp, _, err := session.Client.AgentApi.AgentServiceForServerCreate(session.AuthCtx, *createReq)
 	if err != nil {
 		if isHarnessAgentAlreadyExists(err) {
-			return scopedAgentIdentifier(agentCR.Spec.Scope, agentCR.Spec.Identifier), nil, true, nil
+			return scopedAgentIdentifier(agentCR.Spec.Identifier), nil, true, nil
 		}
 		return "", nil, false, err
 	}
 
-	return scopedAgentIdentifier(agentCR.Spec.Scope, resp.Identifier), resp.Credentials, false, nil
+	return scopedAgentIdentifier(resp.Identifier), resp.Credentials, false, nil
 }
 
 // deleteHarnessAgent deletes an agent using the current API request contract.
@@ -63,7 +63,7 @@ func (r *HarnessGitopsAgentReconciler) deleteHarnessAgent(
 ) error {
 	_, _, err := session.Client.AgentApi.AgentServiceForServerDelete(
 		session.AuthCtx,
-		scopedAgentIdentifier(agentCR.Spec.Scope, agentIdentifier),
+		scopedAgentIdentifier(agentIdentifier),
 		&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),

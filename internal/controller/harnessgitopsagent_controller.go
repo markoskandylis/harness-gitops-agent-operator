@@ -62,117 +62,154 @@ type HarnessSession struct {
 }
 
 func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	// 1. FETCH THE OBJECT
 	agentCR := &infrastructurev1.HarnessGitopsAgent{}
 	if err := r.Get(ctx, req.NamespacedName, agentCR); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// 2. CHECK IF "DELETE" WAS REQUESTED
-	isAgentMarkedToBeDeleted := agentCR.GetDeletionTimestamp() != nil
 	existingAgentIdentifier := strings.TrimSpace(agentCR.Spec.ExistingAgentIdentifier)
 	existingAgentMode := existingAgentIdentifier != ""
-	mappingSpec := agentCR.Spec.ProjectMapping
-	needsMapping := mappingSpec != nil
-	mappingProjectID := ""
-	mappingAppProject := ""
-
-	if needsMapping {
-		scope := strings.TrimSpace(agentCR.Spec.Scope)
-		if !strings.EqualFold(scope, "ORG") &&
-			!strings.EqualFold(scope, "ACCOUNT") &&
-			!strings.EqualFold(scope, "PROJECT") {
-			return ctrl.Result{}, fmt.Errorf("spec.projectMapping is only supported for ACCOUNT, ORG, or PROJECT scope")
-		}
-		mappingProjectID = strings.TrimSpace(mappingSpec.ProjectId)
-		mappingAppProject = strings.TrimSpace(mappingSpec.AppProject)
-		if mappingProjectID == "" || mappingAppProject == "" {
-			return ctrl.Result{}, fmt.Errorf("spec.projectMapping.projectId and spec.projectMapping.AppProject are both required when projectMapping is set")
-		}
+	mappingProjectID, mappingAppProject, err := projectMappingDetails(agentCR)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
-	if isAgentMarkedToBeDeleted {
-		if controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
-			if existingAgentMode {
-				// Do not delete shared agents. Best effort cleanup for mapping created by this CR.
-				if agentCR.Status.ArgoProjectMappingId != "" {
-					log.Info("Deleting AppProject mapping", "mappingId", agentCR.Status.ArgoProjectMappingId)
-					harnessSession, err := r.getHarnessClient(ctx, agentCR)
-					if err != nil {
-						log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
-						return ctrl.Result{}, err
-					}
-					if err := r.deleteAppProjectMapping(
-						harnessSession,
-						agentCR,
-						existingAgentIdentifier,
-						agentCR.Status.ArgoProjectMappingId,
-						mappingProjectID,
-					); err != nil {
-						log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
-						return ctrl.Result{}, err
-					}
-				}
+	if agentCR.GetDeletionTimestamp() != nil {
+		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode, mappingProjectID)
+	}
 
-				log.Info("Skipping Harness agent delete because existingAgentIdentifier is set", "existingAgentIdentifier", existingAgentIdentifier)
-				controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
-				return ctrl.Result{}, r.Update(ctx, agentCR)
-			}
+	if result, done, err := r.ensureFinalizer(ctx, agentCR); done {
+		return result, err
+	}
 
-			log.Info("Deleting agent from Harness Platform...")
+	return r.reconcileReady(ctx, req, agentCR, existingAgentIdentifier, existingAgentMode, mappingProjectID, mappingAppProject)
+}
 
-			harnessSession, err := r.getHarnessClient(ctx, agentCR)
-			if err != nil {
-				// Keep finalizer until cleanup in Harness succeeds.
-				log.Error(err, "Failed to initialize Harness session for delete; retaining finalizer")
-				return ctrl.Result{}, err
-			}
+func projectMappingDetails(agentCR *infrastructurev1.HarnessGitopsAgent) (string, string, error) {
+	mappingSpec := agentCR.Spec.ProjectMapping
+	if mappingSpec == nil {
+		return "", "", nil
+	}
 
-			agentIdentifier := agentCR.Status.AgentIdentifier
-			if agentIdentifier == "" {
-				// Fallback handles cases where status was never written.
-				agentIdentifier = agentCR.Spec.Identifier
-			}
-			if agentIdentifier == "" {
-				return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
-			}
+	scope := strings.TrimSpace(agentCR.Spec.Scope)
+	if !strings.EqualFold(scope, "ORG") &&
+		!strings.EqualFold(scope, "ACCOUNT") &&
+		!strings.EqualFold(scope, "PROJECT") {
+		return "", "", fmt.Errorf("spec.projectMapping is only supported for ACCOUNT, ORG, or PROJECT scope")
+	}
 
-			err = r.deleteHarnessAgent(harnessSession, agentCR, agentIdentifier)
-			if err != nil {
-				if isHarnessAgentNotFound(err) {
-					log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
-				} else {
-					if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-						log.Error(err, "Failed to delete agent from Harness",
-							"body", string(swaggerErr.Body()))
-					} else {
-						log.Error(err, "Failed to delete agent from Harness")
-					}
-					return ctrl.Result{}, err
-				}
-			}
+	mappingProjectID := strings.TrimSpace(mappingSpec.ProjectId)
+	mappingAppProject := strings.TrimSpace(mappingSpec.AppProject)
+	if mappingProjectID == "" || mappingAppProject == "" {
+		return "", "", fmt.Errorf("spec.projectMapping.projectId and spec.projectMapping.AppProject are both required when projectMapping is set")
+	}
+	return mappingProjectID, mappingAppProject, nil
+}
 
-			// C. Remove Finalizer
-			controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
-			if err := r.Update(ctx, agentCR); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
+func (r *HarnessGitopsAgentReconciler) ensureFinalizer(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+) (ctrl.Result, bool, error) {
+	if controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
+		return ctrl.Result{}, false, nil
+	}
+
+	controllerutil.AddFinalizer(agentCR, harnessAgentFinalizer)
+	if err := r.Update(ctx, agentCR); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	return ctrl.Result{Requeue: true}, true, nil
+}
+
+func (r *HarnessGitopsAgentReconciler) reconcileDeletion(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	existingAgentIdentifier string,
+	existingAgentMode bool,
+	mappingProjectID string,
+) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
-	// 3. ADD FINALIZER (If missing)
-	if !controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
-		controllerutil.AddFinalizer(agentCR, harnessAgentFinalizer)
-		if err := r.Update(ctx, agentCR); err != nil {
-			return ctrl.Result{}, err
+	log := logf.FromContext(ctx)
+	if existingAgentMode {
+		// Do not delete shared agents. Best effort cleanup for mapping created by this CR.
+		if agentCR.Status.ArgoProjectMappingId != "" {
+			log.Info("Deleting AppProject mapping", "mappingId", agentCR.Status.ArgoProjectMappingId)
+			harnessSession, err := r.getHarnessClient(ctx, agentCR)
+			if err != nil {
+				log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
+				return ctrl.Result{}, err
+			}
+			if err := r.deleteAppProjectMapping(
+				harnessSession,
+				agentCR,
+				existingAgentIdentifier,
+				agentCR.Status.ArgoProjectMappingId,
+				mappingProjectID,
+			); err != nil {
+				log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
+				return ctrl.Result{}, err
+			}
 		}
-		return ctrl.Result{Requeue: true}, nil
+
+		log.Info("Skipping Harness agent delete because existingAgentIdentifier is set", "existingAgentIdentifier", existingAgentIdentifier)
+		controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
+		return ctrl.Result{}, r.Update(ctx, agentCR)
 	}
 
-	// 4. CHECK IF FULLY RECONCILED (Idempotency)
+	log.Info("Deleting agent from Harness Platform...")
+	harnessSession, err := r.getHarnessClient(ctx, agentCR)
+	if err != nil {
+		// Keep finalizer until cleanup in Harness succeeds.
+		log.Error(err, "Failed to initialize Harness session for delete; retaining finalizer")
+		return ctrl.Result{}, err
+	}
+
+	agentIdentifier := agentCR.Status.AgentIdentifier
+	if agentIdentifier == "" {
+		// Fallback handles cases where status was never written.
+		agentIdentifier = agentCR.Spec.Identifier
+	}
+	if agentIdentifier == "" {
+		return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
+	}
+
+	err = r.deleteHarnessAgent(harnessSession, agentCR, agentIdentifier)
+	if err != nil {
+		if isHarnessAgentNotFound(err) {
+			log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
+		} else {
+			if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
+				log.Error(err, "Failed to delete agent from Harness",
+					"body", string(swaggerErr.Body()))
+			} else {
+				log.Error(err, "Failed to delete agent from Harness")
+			}
+			return ctrl.Result{}, err
+		}
+	}
+
+	controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
+	if err := r.Update(ctx, agentCR); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *HarnessGitopsAgentReconciler) reconcileReady(
+	ctx context.Context,
+	req ctrl.Request,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	existingAgentIdentifier string,
+	existingAgentMode bool,
+	mappingProjectID string,
+	mappingAppProject string,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+	needsMapping := agentCR.Spec.ProjectMapping != nil
+
 	agentDone := agentCR.Status.AgentIdentifier != ""
 	argoProjectDone := !needsMapping || agentCR.Status.ArgoProjectId != ""
 	mappingDone := !needsMapping ||
@@ -188,7 +225,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, nil
 	}
 
-	// 5. REGISTER NEW AGENT (Create Logic)
 	harnessSession, err := r.getHarnessClient(ctx, agentCR)
 	if err != nil {
 		log.Error(err, "Failed to initialize Harness Session")
@@ -199,7 +235,7 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	var agentCredentials *nextgen.V1AgentCredentials
 
 	if existingAgentMode {
-		agentIdentifier = scopedAgentIdentifier(agentCR.Spec.Scope, existingAgentIdentifier)
+		agentIdentifier = scopedAgentIdentifier(existingAgentIdentifier)
 		if agentCR.Status.AgentIdentifier == "" {
 			agentCR.Status.AgentIdentifier = agentIdentifier
 			if err := r.Status().Update(ctx, agentCR); err != nil {
@@ -231,7 +267,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 6. WRITE TOKEN SECRET — skipped in existing-agent mode (agent already has a token).
 	if agentCR.Spec.ExistingAgentIdentifier == "" {
 		// Skip if already written to avoid invalidating the running agent.
 		if !tokenSecretReady {
@@ -248,7 +283,6 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// 8. CREATE APP PROJECT MAPPING (existing-agent mode only)
 	// Maps the in-cluster ArgoProject to the target Harness project via the API.
 	if needsMapping && agentCR.Status.ArgoProjectId == "" {
 		mappingId, err := r.createAppProjectMapping(
@@ -346,7 +380,7 @@ func scopedPathAgentIdentifierCandidates(scope string, identifier string) []stri
 
 // scopedAgentIdentifier keeps the exact identifier shape provided by users/SDK.
 // Do not force org/account prefixes here; Harness may return non-dot-scoped IDs.
-func scopedAgentIdentifier(scope string, identifier string) string {
+func scopedAgentIdentifier(identifier string) string {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return ""
@@ -411,14 +445,14 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 	}
 
 	cfg := nextgen.NewConfiguration()
-	client := nextgen.NewAPIClient(cfg)
+	apiClient := nextgen.NewAPIClient(cfg)
 
 	authCtx := context.WithValue(ctx, nextgen.ContextAPIKey, nextgen.APIKey{
 		Key: string(apiKey),
 	})
 
 	return &HarnessSession{
-		Client:  client,
+		Client:  apiClient,
 		AuthCtx: authCtx,
 	}, nil
 }

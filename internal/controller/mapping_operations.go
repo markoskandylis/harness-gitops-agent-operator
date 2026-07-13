@@ -28,7 +28,7 @@ func (r *HarnessGitopsAgentReconciler) deleteAppProjectMapping(
 ) error {
 	_, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
 		session.AuthCtx,
-		scopedAgentIdentifier(agentCR.Spec.Scope, existingAgentIdentifier),
+		scopedAgentIdentifier(existingAgentIdentifier),
 		mappingID,
 		&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
@@ -47,60 +47,6 @@ func (r *HarnessGitopsAgentReconciler) deleteAppProjectMapping(
 		}
 	}
 	return err
-}
-
-// fetchArgoProjectId resolves the Argo AppProject name for an agent by using the
-// latest v2 project-mapping endpoint, with a v1 fallback for compatibility.
-func (r *HarnessGitopsAgentReconciler) fetchArgoProjectId(
-	harnessSession *HarnessSession,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	agentIdentifier string,
-) (string, error) {
-	v2Resp, _, v2Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingsListByAgentV2(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
-		},
-	)
-	if v2Err == nil {
-		projectID, err := selectArgoProjectIDFromV2Mappings(
-			v2Resp.AppProjectMappings,
-			agentCR.Spec.AccountId,
-			agentCR.Spec.OrgId,
-			agentCR.Spec.ProjectId,
-		)
-		if err == nil {
-			return projectID, nil
-		}
-	}
-
-	v1Resp, _, v1Err := harnessSession.Client.ProjectMappingsApi.AppProjectMappingServiceGetAppProjectMappingListByAgent(
-		harnessSession.AuthCtx,
-		agentIdentifier,
-		&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingListByAgentOpts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(agentCR.Spec.ProjectId),
-		},
-	)
-	if v1Err != nil {
-		if v2Err != nil {
-			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback failed: %v", v2Err, v1Err)
-		}
-		return "", v1Err
-	}
-
-	projectID, selErr := selectArgoProjectIDFromV1Mapping(v1Resp.AppProjMap, agentCR.Spec.OrgId, agentCR.Spec.ProjectId)
-	if selErr != nil {
-		if v2Err != nil {
-			return "", fmt.Errorf("project mappings v2 failed: %w; v1 fallback returned no scoped mapping: %v", v2Err, selErr)
-		}
-		return "", selErr
-	}
-	return projectID, nil
 }
 
 // createAppProjectMapping calls AppProjectMappingServiceCreateV2 to map an existing in-cluster

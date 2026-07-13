@@ -7,6 +7,11 @@ import (
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 )
 
+const (
+	myAgentIdentifier  = "my-agent"
+	hubAgentIdentifier = "hubagent"
+)
+
 func TestSelectArgoProjectIDFromV2Mappings_DeterministicScopedMatch(t *testing.T) {
 	mappings := []nextgen.V1AppProjectMappingV2{
 		{
@@ -91,77 +96,77 @@ func TestSelectArgoProjectIDFromV1Mapping_ScopeMismatch(t *testing.T) {
 }
 
 func TestScopedAgentIdentifier_OrgScopeKeepsIdentifier(t *testing.T) {
-	got := scopedAgentIdentifier("ORG", "my-agent")
-	if got != "my-agent" {
+	got := scopedAgentIdentifier(myAgentIdentifier)
+	if got != myAgentIdentifier {
 		t.Fatalf("expected ORG scope identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_AlreadyPrefixedUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("ORG", "org.my-agent")
+	got := scopedAgentIdentifier("org.my-agent")
 	if got != "org.my-agent" {
 		t.Fatalf("expected existing prefixed identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_OrgLikeIdentifierWithoutDotUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("ORG", "orggitopsagent")
+	got := scopedAgentIdentifier("orggitopsagent")
 	if got != "orggitopsagent" {
 		t.Fatalf("expected org-like identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_ProjectScopeUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("PROJECT", "my-agent")
-	if got != "my-agent" {
+	got := scopedAgentIdentifier(myAgentIdentifier)
+	if got != myAgentIdentifier {
 		t.Fatalf("expected project scope identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_AccountScopeKeepsIdentifier(t *testing.T) {
-	got := scopedAgentIdentifier("ACCOUNT", "my-agent")
-	if got != "my-agent" {
+	got := scopedAgentIdentifier(myAgentIdentifier)
+	if got != myAgentIdentifier {
 		t.Fatalf("expected ACCOUNT scope identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_AccountScopeAlreadyPrefixedUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("ACCOUNT", "account.my-agent")
+	got := scopedAgentIdentifier("account.my-agent")
 	if got != "account.my-agent" {
 		t.Fatalf("expected existing account-prefixed identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedAgentIdentifier_AccountLikeIdentifierWithoutDotUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("ACCOUNT", "accountgitopsagent")
+	got := scopedAgentIdentifier("accountgitopsagent")
 	if got != "accountgitopsagent" {
 		t.Fatalf("expected account-like identifier to remain unchanged, got %q", got)
 	}
 }
 
 func TestScopedPathAgentIdentifierCandidates_OrgScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ORG", "hubagent")
-	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != "hubagent" {
+	got := scopedPathAgentIdentifierCandidates("ORG", hubAgentIdentifier)
+	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != hubAgentIdentifier {
 		t.Fatalf("unexpected ORG candidates: %#v", got)
 	}
 }
 
 func TestScopedPathAgentIdentifierCandidates_AccountScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ACCOUNT", "hubagent")
-	if len(got) != 2 || got[0] != "account.hubagent" || got[1] != "hubagent" {
+	got := scopedPathAgentIdentifierCandidates("ACCOUNT", hubAgentIdentifier)
+	if len(got) != 2 || got[0] != "account.hubagent" || got[1] != hubAgentIdentifier {
 		t.Fatalf("unexpected ACCOUNT candidates: %#v", got)
 	}
 }
 
 func TestScopedPathAgentIdentifierCandidates_PrefixedInput(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ORG", "org.hubagent")
-	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != "hubagent" {
+	got := scopedPathAgentIdentifierCandidates("ORG", "org."+hubAgentIdentifier)
+	if len(got) != 2 || got[0] != "org."+hubAgentIdentifier || got[1] != hubAgentIdentifier {
 		t.Fatalf("unexpected prefixed candidates: %#v", got)
 	}
 }
 
 func TestScopedPathAgentIdentifierCandidates_ProjectScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("PROJECT", "hubagent")
+	got := scopedPathAgentIdentifierCandidates("PROJECT", hubAgentIdentifier)
 	if len(got) != 1 || got[0] != "hubagent" {
 		t.Fatalf("unexpected PROJECT candidates: %#v", got)
 	}
