@@ -31,14 +31,23 @@ import (
 	"github.com/markoskandylis/harness-gitops-agent-operator/test/utils"
 )
 
+const enabledEnvValue = "true"
+
 var (
+	// useExistingController skips the scaffolded image build and controller deployment.
+	// It lets the live registration specs exercise an exact image that CI installed already.
+	useExistingController = os.Getenv("E2E_USE_EXISTING_CONTROLLER") == enabledEnvValue
+
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
 	// These variables are useful if CertManager is already installed, avoiding
 	// re-installation and conflicts.
-	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
+	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == enabledEnvValue
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
+	// certManagerInstalledBySuite prevents teardown from touching an ambient installation
+	// when setup was skipped, detected an existing installation, or failed early.
+	certManagerInstalledBySuite = false
 
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
@@ -52,10 +61,25 @@ var (
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting harness-gitops-agent-operator integration test suite\n")
-	RunSpecs(t, "e2e suite")
+	suiteConfig, _ := GinkgoConfiguration()
+	suiteConfig.FailOnEmpty = true
+	RunSpecs(t, "e2e suite", suiteConfig)
 }
 
 var _ = BeforeSuite(func() {
+	liveRequested := os.Getenv("RUN_HARNESS_LIVE_E2E") == enabledEnvValue
+	if liveRequested || liveSpecsExplicitlySelected() {
+		Expect(liveRequested).To(BeTrue(), "RUN_HARNESS_LIVE_E2E=true is required for live-selected E2E specs")
+		Expect(useExistingController).To(
+			BeTrue(),
+			"E2E_USE_EXISTING_CONTROLLER=true is required for live-selected E2E specs",
+		)
+	}
+
+	if useExistingController {
+		return
+	}
+
 	By("building the manager(Operator) image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
 	_, err := utils.Run(cmd)
@@ -77,6 +101,7 @@ var _ = BeforeSuite(func() {
 		if !isCertManagerAlreadyInstalled {
 			_, _ = fmt.Fprintf(GinkgoWriter, "Installing CertManager...\n")
 			Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+			certManagerInstalledBySuite = true
 		} else {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
@@ -84,8 +109,12 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	// Teardown CertManager after the suite if not skipped and if it was not already installed
-	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
+	if useExistingController {
+		return
+	}
+
+	// Teardown only resources whose successful installation this suite recorded.
+	if certManagerInstalledBySuite {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
 		utils.UninstallCertManager()
 	}
