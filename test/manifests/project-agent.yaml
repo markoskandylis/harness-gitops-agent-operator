@@ -1,0 +1,37 @@
+# PROJECT-scoped HarnessGitopsAgent example.
+#
+# Prerequisites (in the CR namespace):
+#   kubectl create namespace argocd-agent
+#   kubectl -n argocd-agent create secret generic harness-api-key-secret \
+#     --from-literal=api_key='<HARNESS_API_KEY>'
+#
+# Replace every <...> placeholder before applying. On success the controller
+# populates .status.agentIdentifier and writes GITOPS_AGENT_TOKEN into the
+# Secret named by tokenSecretRef. Deleting the CR deregisters the agent from
+# Harness via the finalizer.
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  name: project-agent
+  namespace: argocd-agent
+spec:
+  name: project-agent
+  # Unique within the Harness scope; letters, digits and underscores only.
+  identifier: project_agent
+  accountId: "<ACCOUNT_ID>"
+  orgId: "<ORG_ID>"
+  # projectId is required for (and only used by) PROJECT scope.
+  projectId: "<PROJECT_ID>"
+  operator: ARGO
+  scope: PROJECT
+  type: MANAGED_ARGO_PROVIDER
+  # Secret in this namespace holding key "api_key".
+  apiKeySecretRef: harness-api-key-secret
+  # Secret the controller creates/updates with key GITOPS_AGENT_TOKEN.
+  # The gitops-helm runtime consumes it via agent.existingSecrets.agentToken.
+  tokenSecretRef: project-agent-token
+  # Optional: map an Argo CD AppProject to a Harness project.
+  # Both fields are required together.
+  # projectMapping:
+  #   projectId: "<PROJECT_ID>"
+  #   AppProject: default

@@ -71,26 +71,43 @@ Resources installed:
 
 Chart path:
 
-- `chart/harness-gitops-agent-bootstrap`
+- `charts/harness-gitops-agent-bootstrap`
 
 Purpose:
 
 1. Creates `HarnessGitopsAgent` CR (controller registers agent in Harness and writes token secret).
 2. Installs Harness `gitops-helm` runtime in the same namespace.
 
-Install example:
+The install is two-phase: `gitopsAgent.enabled` defaults to `false`, so the first
+install creates only the CR. Enable the runtime after the controller has written
+the token secret.
+
+Install example (phase one - CR only):
 
 ```sh
-helm upgrade --install hub-bootstrap chart/harness-gitops-agent-bootstrap \
+helm dependency build charts/harness-gitops-agent-bootstrap
+
+helm upgrade --install hub-bootstrap charts/harness-gitops-agent-bootstrap \
   -n argocd-agent \
   --create-namespace \
   --set gitopsAgent.harness.identity.accountIdentifier="<ACCOUNT_ID>" \
   --set gitopsAgent.harness.identity.orgIdentifier="<ORG_ID>" \
   --set gitopsAgent.harness.identity.projectIdentifier="<PROJECT_ID>" \
   --set gitopsAgent.harness.identity.agentIdentifier="hubagent" \
+  --set gitopsAgent.agent.harnessName="hub-bootstrap" \
   --set harnessAgent.spec.apiKeySecretRef="harness-api-key-secret" \
   --set harnessAgent.spec.tokenSecretRef="my-agent-token" \
   --set gitopsAgent.agent.existingSecrets.agentToken="my-agent-token"
+```
+
+Phase two - install the GitOps runtime once the token secret exists
+(`kubectl get secret my-agent-token -n argocd-agent`):
+
+```sh
+helm upgrade hub-bootstrap charts/harness-gitops-agent-bootstrap \
+  -n argocd-agent \
+  --reuse-values \
+  --set gitopsAgent.enabled=true --wait
 ```
 
 Notes:
@@ -98,6 +115,8 @@ Notes:
 1. Controller must already be installed.
 2. Secret `harness-api-key-secret` with key `api_key` must exist in `argocd-agent`.
 3. Keep `harnessAgent.spec.tokenSecretRef` and `gitopsAgent.agent.existingSecrets.agentToken` identical.
+4. The gitops-helm dependency archive is gitignored; run `helm dependency build` after a clean checkout.
+5. See `charts/harness-gitops-agent-bootstrap/README.md` and `values-example.yaml` for the full contract.
 
 ## Quickstart (Local k3d)
 
@@ -150,15 +169,18 @@ kubectl -n argocd-agent create secret generic harness-api-key-secret \
 
 ### 2. Apply custom resource
 
+Edit the `<...>` placeholders in the manifest first (account, org, project
+identifiers). See `test/manifests/README.md` for all scope variants.
+
 ```sh
-kubectl apply -f test/manifests/my-agent.yaml
+kubectl apply -f test/manifests/project-agent.yaml
 ```
 
 ### 3. Verify reconcile
 
 ```sh
-kubectl get harnessgitopsagent -n argocd-agent hub-agent -o yaml
-kubectl get secret -n argocd-agent my-agent-token -o yaml
+kubectl get harnessgitopsagent -n argocd-agent project-agent -o yaml
+kubectl get secret -n argocd-agent project-agent-token -o yaml
 ```
 
 Expected:
@@ -170,7 +192,7 @@ Expected:
 ## Deletion
 
 ```sh
-kubectl delete -f test/manifests/my-agent.yaml
+kubectl delete -f test/manifests/project-agent.yaml
 ```
 
 The controller removes the agent from Harness and then removes the finalizer.

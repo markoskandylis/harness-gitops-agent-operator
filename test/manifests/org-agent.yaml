@@ -1,0 +1,22 @@
+# ORG-scoped HarnessGitopsAgent example (minimal).
+#
+# Same prerequisites as project-agent.yaml: the namespace and the
+# harness-api-key-secret Secret must exist first. Replace every <...>
+# placeholder before applying.
+#
+# Note: ORG scope omits spec.projectId — the agent lives at organization level.
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  name: org-agent
+  namespace: argocd-agent
+spec:
+  name: org-agent
+  identifier: org_agent
+  accountId: "<ACCOUNT_ID>"
+  orgId: "<ORG_ID>"
+  operator: ARGO
+  scope: ORG
+  type: MANAGED_ARGO_PROVIDER
+  apiKeySecretRef: harness-api-key-secret
+  tokenSecretRef: org-agent-token

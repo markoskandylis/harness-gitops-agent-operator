@@ -318,7 +318,7 @@ func TestCreateLiveNamespaceRequiresExistingLocalCredential(t *testing.T) {
 					Name:      liveAPIKeySecretName,
 					Namespace: "operator-system",
 				},
-				Data: map[string][]byte{liveAPIKeySecretKey: []byte{}},
+				Data: map[string][]byte{liveAPIKeySecretKey: {}},
 			}},
 			wantMessage: "must contain non-empty key",
 		},

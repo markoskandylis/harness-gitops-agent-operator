@@ -1,7 +1,7 @@
 Step-by-step installation (manual CRD + chart):
 
 1. Install CRD first:
-   kubectl apply -f chart/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
+   kubectl apply -f charts/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
 
 2. Install/upgrade chart without CRD management:
    helm upgrade --install {{ .Release.Name }} {{ .Chart.Name }} \

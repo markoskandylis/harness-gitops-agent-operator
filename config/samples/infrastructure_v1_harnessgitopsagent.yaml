@@ -6,4 +6,15 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: harnessgitopsagent-sample
 spec:
-  # TODO(user): Add fields here
+  name: harnessgitopsagent-sample
+  identifier: harnessgitopsagent_sample
+  accountId: "<ACCOUNT_ID>"
+  orgId: "<ORG_ID>"
+  projectId: "<PROJECT_ID>"
+  operator: ARGO
+  scope: PROJECT
+  type: MANAGED_ARGO_PROVIDER
+  # Secret in the CR namespace holding key "api_key".
+  apiKeySecretRef: harness-api-key-secret
+  # Secret the controller writes with key GITOPS_AGENT_TOKEN.
+  tokenSecretRef: harnessgitopsagent-sample-token
