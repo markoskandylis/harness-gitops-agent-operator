@@ -1,0 +1,142 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# Contract with the controller: the CR is rendered from these values plus the
+# shared identity block under gitopsAgent.harness.identity (single source of
+# truth for account/org/project/agent identifiers used by BOTH the CR and the
+# runtime).
+harnessAgent:
+  enabled: true
+  metadata:
+    name: ""
+    annotations: {}
+    labels: {}
+  spec:
+    name: ""
+    operator: ARGO
+    scope: PROJECT
+    type: MANAGED_ARGO_PROVIDER
+    projectMapping:
+      projectId: ""
+      AppProject: ""
+    existingAgentIdentifier: ""
+    # The Harness API key Secret must already exist in the release namespace
+    # with key "api_key". Never put its value in chart values.
+    apiKeySecretRef: harness-api-key-secret
+    tokenSecretRef: ""
+
+appProject:
+  enabled: false
+  name: default
+  namespace: ""
+  description: AppProject created for the Harness GitOps Agent instance
+  annotations: {}
+  labels: {}
+
+# Phase switch: with false only the CR is rendered (phase one). Enable the
+# runtime after the controller has written the token Secret so a failure to
+# produce the token is reported precisely instead of as generic unready pods.
+gitopsAgent:
+  enabled: false
+  argo-cd:
+    enabled: true
+    # Set install: false on clusters that already have the Argo CRDs (for
+    # example a second agent instance, or an existing Argo CD install) so
+    # disposable releases never fight over CRD ownership.
+    crds:
+      install: true
+    configs:
+      params:
+        server.repo.server.timeout.seconds: "300"
+        controller.repo.server.timeout.seconds: "300"
+    controller:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi
+    applicationSet:
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    repoServer:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 512Mi
+        limits:
+          cpu: 1
+          memory: 1Gi
+    redis:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    # The Harness GitOps agent is headless; the Argo CD UI/API server is not
+    # needed for agent operation.
+    server:
+      replicas: 0
+    dex:
+      enabled: false
+    notifications:
+      enabled: false
+  harness:
+    identity:
+      accountIdentifier: ""
+      orgIdentifier: ""
+      projectIdentifier: ""
+      agentIdentifier: ""
+    configMap:
+      http:
+        tlsEnabled: false
+        agentHttpTarget: https://app.harness.io/gitops
+      logLevel: info
+    # The agent health checks (list deployments, read pod logs) are granted
+    # only by the chart's ClusterRole/ClusterRoleBinding. Their names derive
+    # from agent.harnessName — override it per install so multiple instances
+    # on one cluster never collide on the fixed default name.
+    createClusterRoles: true
+    networkPolicy:
+      create: true
+  agent:
+    # Unique per install: names the agent ClusterRole/ClusterRoleBinding
+    # (<harnessName>-agent). Leave the default only for a single-instance
+    # cluster.
+    harnessName: gitops-agent
+    existingSecrets:
+      # Must match harnessAgent.spec.tokenSecretRef; the template fails the
+      # render on mismatch. The controller writes GITOPS_AGENT_TOKEN into this
+      # Secret after registering the agent.
+      agentToken: ""
+    image:
+      tag: v0.121.0
+    replicas: 1
+    highAvailability: false
+    serviceAccount:
+      create: true
+      name: gitops-agent
+      automountServiceAccountToken: true
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  # Disabled by default: the upgrader CronJob references the chart-managed
+  # token Secret and fails with CreateContainerConfigError when
+  # agent.existingSecrets.agentToken is used (the controller-written Secret
+  # replaces the chart-managed one). Pinned installs should not self-upgrade;
+  # enable only for chart-managed-secret installs that want automatic agent
+  # upgrades.
+  upgrader:
+    enabled: false

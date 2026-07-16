@@ -1,0 +1,17 @@
+apiVersion: v2
+name: harness-gitops-agent-bootstrap
+description: Bootstrap one Harness GitOps Agent instance managed by the harness-gitops-agent-operator. Creates a HarnessGitopsAgent CR and installs the official Harness gitops-helm runtime, which consumes the agent token Secret written by the controller.
+type: application
+version: 0.2.0
+appVersion: "v0.121.0"
+keywords:
+  - harness
+  - gitops
+  - argo-cd
+  - bootstrap
+dependencies:
+  - name: gitops-helm
+    alias: gitopsAgent
+    version: "1.2.7"
+    repository: "https://harness.github.io/gitops-helm/"
+    condition: gitopsAgent.enabled

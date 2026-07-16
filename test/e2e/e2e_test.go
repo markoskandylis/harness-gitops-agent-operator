@@ -45,13 +45,17 @@ const metricsServiceName = "harness-gitops-agent-operator-controller-manager-met
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "harness-gitops-agent-operator-metrics-binding"
 
-var _ = Describe("Manager", Ordered, func() {
+var _ = Describe("Manager", Ordered, Label("manager"), func() {
 	var controllerPodName string
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
 	// and deploying the controller.
 	BeforeAll(func() {
+		if useExistingController {
+			Skip("manager setup is disabled because CI installed the controller")
+		}
+
 		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
 		_, err := utils.Run(cmd)
@@ -77,6 +81,10 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		if useExistingController {
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
 		_, _ = utils.Run(cmd)

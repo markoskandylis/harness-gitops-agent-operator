@@ -1,0 +1,55 @@
+# Example values for one Harness GitOps Agent instance.
+#
+# Copy this file, replace every placeholder, then:
+#
+#   helm dependency build .
+#   helm upgrade --install my-agent . \
+#     --namespace my-agent-ns --create-namespace \
+#     --values my-values.yaml
+#
+# Wait until the controller has written the token Secret
+# (kubectl get secret example-agent-token -n my-agent-ns), then enable the
+# runtime (phase two):
+#
+#   helm upgrade my-agent . --namespace my-agent-ns \
+#     --reuse-values --set gitopsAgent.enabled=true --wait
+#
+# Prerequisites: the harness-gitops-agent-operator controller is running in the
+# cluster, and Secret harness-api-key-secret (key: api_key) exists in the
+# release namespace. Run one agent instance per namespace.
+
+harnessAgent:
+  metadata:
+    name: example-agent
+  spec:
+    name: example-agent
+    scope: PROJECT # PROJECT | ORG | ACCOUNT
+    apiKeySecretRef: harness-api-key-secret
+    tokenSecretRef: example-agent-token
+    # Optional: map an Argo CD AppProject to a Harness project.
+    projectMapping:
+      projectId: your-project-id
+      AppProject: default
+
+gitopsAgent:
+  argo-cd:
+    # Set false when the cluster already has the Argo CRDs (existing Argo CD
+    # or another agent instance).
+    crds:
+      install: true
+  harness:
+    identity:
+      accountIdentifier: your-account-id
+      orgIdentifier: your-org-id
+      # Required for PROJECT scope; leave "" for ORG or ACCOUNT scope.
+      projectIdentifier: your-project-id
+      agentIdentifier: example_agent
+  agent:
+    # Unique per install on the same cluster (names the agent ClusterRole).
+    harnessName: example-agent
+    existingSecrets:
+      # Must equal harnessAgent.spec.tokenSecretRef.
+      agentToken: example-agent-token
+
+appProject:
+  enabled: true
