@@ -24,6 +24,11 @@ leaderElection:
   enabled: true
 
 manager:
+  # Empty keeps the API key Secret namespaced with each agent CR. Set this to
+  # the controller namespace to centralize API credentials away from runtimes.
+  apiKeySecretNamespace: ""
+  appProjectPendingRetryInterval: 20s
+  harnessMappingResyncInterval: 5m
   healthProbe:
     bindAddress: ":8081"
     port: 8081

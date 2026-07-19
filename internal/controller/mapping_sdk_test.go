@@ -1,0 +1,189 @@
+package controller
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"testing"
+
+	"github.com/harness/harness-go-sdk/harness/nextgen"
+)
+
+func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) {
+	var paths []string
+	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings" {
+			_, _ = w.Write([]byte(`{"appProjectMappings":[]}`))
+			return
+		}
+		http.Error(w, `{"message":"unexpected alternate candidate"}`, http.StatusInternalServerError)
+	}))
+
+	mappings, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest())
+	if err != nil {
+		t.Fatalf("list mappings: %v", err)
+	}
+	if len(mappings) != 0 {
+		t.Fatalf("expected an empty mapping list, got %#v", mappings)
+	}
+	want := []string{"/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("successful canonical response queried alternate candidates: got %#v, want %#v", paths, want)
+	}
+}
+
+func TestSDKMappingListFallsBackOnlyAfterNotFound(t *testing.T) {
+	var paths []string
+	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings" {
+			http.Error(w, `{"message":"not found"}`, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"appProjectMappings":[]}`))
+	}))
+
+	if _, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err != nil {
+		t.Fatalf("list mappings: %v", err)
+	}
+	want := []string{
+		"/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings",
+		"/gitops/api/v2/agents/mapping-agent/appprojectsmappings",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("unexpected candidate requests: got %#v, want %#v", paths, want)
+	}
+}
+
+func TestSDKMappingListDoesNotHideCanonicalServerError(t *testing.T) {
+	var paths []string
+	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
+	}))
+
+	if _, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err == nil {
+		t.Fatal("expected the canonical server error to be returned")
+	}
+	want := []string{"/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("canonical server error queried alternate candidates: got %#v, want %#v", paths, want)
+	}
+}
+
+func TestSDKAgentReadinessUsesConnectedHealthyPayload(t *testing.T) {
+	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"identifier":"mapping-agent",
+			"health":{
+				"connectionStatus":"CONNECTED",
+				"harnessGitopsAgent":{
+					"status":"HEALTHY",
+					"message":"All Argo CD components are healthy"
+				}
+			}
+		}`))
+	}))
+
+	readiness, err := (sdkAgentReadinessChecker{}).Readiness(
+		context.Background(),
+		session,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		mappingTestAgentID,
+	)
+	if err != nil {
+		t.Fatalf("get agent readiness: %v", err)
+	}
+	if !readiness.Exists || !readiness.Ready {
+		t.Fatalf("expected the agent to be ready, got %#v", readiness)
+	}
+}
+
+func TestHarnessAgentReadinessRequiresConnectedAndHealthy(t *testing.T) {
+	tests := []struct {
+		name       string
+		agent      nextgen.V1Agent
+		wantReady  bool
+		wantExists bool
+	}{
+		{
+			name:       "health not reported",
+			agent:      nextgen.V1Agent{},
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "connected but unhealthy",
+			agent:      mappingSDKTestAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.UNHEALTHY_Servicev1HealthStatus),
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "healthy but disconnected",
+			agent:      mappingSDKTestAgentHealth(nextgen.DISCONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "connected and healthy",
+			agent:      mappingSDKTestAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
+			wantReady:  true,
+			wantExists: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readiness := readinessFromHarnessAgent(tt.agent)
+			if readiness.Exists != tt.wantExists || readiness.Ready != tt.wantReady {
+				t.Fatalf("unexpected readiness: got %#v", readiness)
+			}
+			if readiness.Message == "" {
+				t.Fatal("readiness message must explain the observed state")
+			}
+		})
+	}
+}
+
+func mappingSDKTestAgentHealth(
+	connection nextgen.V1ConnectedStatus,
+	status nextgen.Servicev1HealthStatus,
+) nextgen.V1Agent {
+	return nextgen.V1Agent{Health: &nextgen.V1AgentHealth{
+		ConnectionStatus: &connection,
+		HarnessGitopsAgent: &nextgen.V1AgentComponentHealth{
+			Status:  &status,
+			Message: "test health",
+		},
+	}}
+}
+
+func newSDKMappingTestSession(t *testing.T, handler http.Handler) *HarnessSession {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cfg := nextgen.NewConfiguration()
+	cfg.BasePath = server.URL
+	cfg.HTTPClient.RetryMax = 0
+	return &HarnessSession{
+		Client:  nextgen.NewAPIClient(cfg),
+		AuthCtx: context.Background(),
+	}
+}
+
+func sdkMappingTestRequest() appProjectMappingRequest {
+	return appProjectMappingRequest{
+		AgentIdentifier:   "mapping-agent",
+		AccountIdentifier: "account",
+		OrgIdentifier:     "org",
+		ArgoProjectName:   "default",
+		AgentScope:        "ORG",
+	}
+}

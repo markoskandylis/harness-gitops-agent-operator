@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "harness-gitops-agent-controller.labels" . | nindent 4 }}
 rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["appprojects"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "list", "patch", "update", "watch"]

@@ -129,8 +129,8 @@ spec:
                 type: string
               argoProjectMappingId:
                 description: |-
-                  ArgoProjectMappingId is the identifier returned by Harness after the AppProject
-                  mapping is created via AppProjectMappingServiceCreateV2. Used as an idempotency guard.
+                  ArgoProjectMappingId is the identifier returned by the most recent successful
+                  Harness mapping verification. It is an observation, not an idempotency guard.
                 type: string
               conditions:
                 description: Conditions store the detailed state transitions.

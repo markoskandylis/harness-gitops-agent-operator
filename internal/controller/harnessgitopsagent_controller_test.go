@@ -84,10 +84,11 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 				Scheme: k8sClient.Scheme(),
 			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(result.Requeue).To(BeTrue(), "the finalizer pass must explicitly requeue")
 
 			// First reconcile adds the finalizer and requeues. Second reconcile executes create path.
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
