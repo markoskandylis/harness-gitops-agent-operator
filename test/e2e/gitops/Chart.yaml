@@ -1,5 +1,0 @@
-apiVersion: v2
-name: harness-mapping-plugin-probe
-description: Helm-owned remote Git and Harness expression E2E probe
-type: application
-version: 0.1.0

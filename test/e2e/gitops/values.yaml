@@ -1,6 +1,0 @@
-repoURL: ""
-revision: ""
-appProject: default
-applicationName: hga-mapping-plugin-probe
-targetNamespace: plugin-probe-e2e
-sourcePath: test/e2e/gitops/plugin-probe

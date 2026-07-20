@@ -96,7 +96,7 @@ func TestMappingWaitsForAppProject(t *testing.T) {
 	if readinessChecker.calls != 0 {
 		t.Fatalf("Harness agent was checked before AppProject existed: %d calls", readinessChecker.calls)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonAppProjectNotFound)
+	assertMappingCondition(t, reconciler.Client, mappingReasonAppProjectNotFound)
 }
 
 func TestMissingAppProjectRetainsVerifiedMappingIdentity(t *testing.T) {
@@ -124,7 +124,7 @@ func TestMissingAppProjectRetainsVerifiedMappingIdentity(t *testing.T) {
 			current.Status,
 		)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonAppProjectNotFound)
+	assertMappingCondition(t, reconciler.Client, mappingReasonAppProjectNotFound)
 }
 
 func TestMappingUsesConfiguredIntervals(t *testing.T) {
@@ -266,7 +266,7 @@ func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 	if mappingAPI.createCalls != 0 {
 		t.Fatalf("conflicting mapping was overwritten: %d create calls", mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonMappingMismatch)
+	assertMappingCondition(t, reconciler.Client, mappingReasonMappingMismatch)
 	current := getMappingTestAgent(t, reconciler.Client)
 	if current.Status.ArgoProjectMappingId != "" {
 		t.Fatalf("stale mapping ID was retained after mismatch: %q", current.Status.ArgoProjectMappingId)
@@ -340,7 +340,7 @@ func TestMappingWaitsForHarnessAgentExistence(t *testing.T) {
 	if mappingAPI.listCalls != 0 || mappingAPI.createCalls != 0 {
 		t.Fatalf("mapping API called before the Harness agent existed: list=%d create=%d", mappingAPI.listCalls, mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonAgentNotFound)
+	assertMappingCondition(t, reconciler.Client, mappingReasonAgentNotFound)
 }
 
 func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
@@ -371,7 +371,7 @@ func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
 	if mappingAPI.listCalls != 0 || mappingAPI.createCalls != 0 {
 		t.Fatalf("mapping API called before the Harness agent was healthy: list=%d create=%d", mappingAPI.listCalls, mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonAgentNotHealthy)
+	assertMappingCondition(t, reconciler.Client, mappingReasonAgentNotHealthy)
 }
 
 func TestCreateWithoutVerifiedListResultDoesNotBecomeReady(t *testing.T) {
@@ -388,7 +388,7 @@ func TestCreateWithoutVerifiedListResultDoesNotBecomeReady(t *testing.T) {
 	if !stderrors.Is(err, errAppProjectMappingNotVerified) {
 		t.Fatalf("expected unverified create to fail, got %v", err)
 	}
-	assertMappingCondition(t, reconciler.Client, metav1.ConditionFalse, mappingReasonVerificationFailed)
+	assertMappingCondition(t, reconciler.Client, mappingReasonVerificationFailed)
 }
 
 func newMappingTestReconciler(
@@ -507,10 +507,11 @@ func getMappingTestAgent(t *testing.T, k8sClient client.Client) *infrastructurev
 	return agent
 }
 
+// assertMappingCondition asserts a not-ready MappingReady condition. Ready
+// states are asserted by assertVerifiedMappingStatus instead.
 func assertMappingCondition(
 	t *testing.T,
 	k8sClient client.Client,
-	status metav1.ConditionStatus,
 	reason string,
 ) {
 	t.Helper()
@@ -519,7 +520,7 @@ func assertMappingCondition(
 	if condition == nil {
 		t.Fatal("MappingReady condition is absent")
 	}
-	if condition.Status != status || condition.Reason != reason {
+	if condition.Status != metav1.ConditionFalse || condition.Reason != reason {
 		t.Fatalf("unexpected MappingReady condition: %#v", condition)
 	}
 }

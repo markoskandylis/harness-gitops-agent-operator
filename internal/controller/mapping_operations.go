@@ -55,7 +55,7 @@ func ValidateMappingIntervals(appProjectPendingRetry time.Duration, harnessMappi
 	}
 	if harnessMappingResync < MinimumMappingInterval {
 		return fmt.Errorf(
-			"Harness mapping resync interval must be at least %s",
+			"harness mapping resync interval must be at least %s",
 			MinimumMappingInterval,
 		)
 	}
@@ -322,7 +322,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		conditionErr := r.setMappingCondition(
 			ctx,
 			agentCR,
-			metav1.ConditionFalse,
 			mappingReasonVerificationFailed,
 			fmt.Sprintf("Unable to read AppProject %s/%s", agentCR.Namespace, argoProjectName),
 		)
@@ -332,7 +331,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		if err := r.setMappingCondition(
 			ctx,
 			agentCR,
-			metav1.ConditionFalse,
 			mappingReasonAppProjectNotFound,
 			fmt.Sprintf("AppProject %s/%s does not exist", agentCR.Namespace, argoProjectName),
 		); err != nil {
@@ -351,7 +349,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		conditionErr := r.setMappingCondition(
 			ctx,
 			agentCR,
-			metav1.ConditionFalse,
 			mappingReasonVerificationFailed,
 			"Unable to verify that the Harness GitOps agent exists",
 		)
@@ -361,7 +358,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		if err := r.setMappingCondition(
 			ctx,
 			agentCR,
-			metav1.ConditionFalse,
 			mappingReasonAgentNotFound,
 			"Harness GitOps agent does not exist yet",
 		); err != nil {
@@ -377,7 +373,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		if err := r.setMappingCondition(
 			ctx,
 			agentCR,
-			metav1.ConditionFalse,
 			mappingReasonAgentNotHealthy,
 			message,
 		); err != nil {
@@ -558,16 +553,18 @@ func safeHarnessAPIError(operation string, agentIdentifier string, response *htt
 	return fmt.Errorf("%s for agentIdentifier=%q failed: %w", operation, agentIdentifier, err)
 }
 
+// setMappingCondition records a not-ready MappingReady condition. MappingReady
+// is only ever set to True by setVerifiedMappingStatus, so this helper always
+// writes ConditionFalse.
 func (r *HarnessGitopsAgentReconciler) setMappingCondition(
 	ctx context.Context,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
-	status metav1.ConditionStatus,
 	reason string,
 	message string,
 ) error {
 	changed := apiMeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
 		Type:               mappingReadyConditionType,
-		Status:             status,
+		Status:             metav1.ConditionFalse,
 		ObservedGeneration: agentCR.Generation,
 		Reason:             reason,
 		Message:            message,

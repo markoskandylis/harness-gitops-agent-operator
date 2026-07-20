@@ -1,13 +1,20 @@
+{{- /* The bundled Argo CD chart renders its CRDs as ordinary templates. Keep
+the AppProject out of Helm's initial object build and create it as a
+post-install hook, after those CRDs are established. Use the same hook on
+upgrade so its lifecycle and ordering stay consistent. */}}
 {{- if and .Values.appProject.enabled .Values.gitopsAgent.enabled }}
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: {{ default "default" .Values.appProject.name | quote }}
   namespace: {{ default .Release.Namespace .Values.appProject.namespace | quote }}
-  {{- with .Values.appProject.annotations }}
   annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+    {{- with .Values.appProject.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
   labels:
     {{- include "harness-gitops-agent-bootstrap.labels" . | nindent 4 }}
     {{- with .Values.appProject.labels }}
