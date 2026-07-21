@@ -1,0 +1,135 @@
+# Remote-cluster E2E profile for charts/harness-gitops-agent-bootstrap.
+#
+# The pipeline supplies all identity values with --set-string and creates the
+# required Kubernetes/Harness Secrets before this chart is installed. No
+# credential or Harness expression belongs in this file.
+#
+# Phase one deliberately installs the runtime with the agent scaled to zero.
+# That gives the controller an AppProject and registered-but-unhealthy agent,
+# so the pipeline can prove MappingReady=False/AgentNotHealthy. Phase two sets
+# gitopsAgent.agent.replicas=1 and waits for MappingReady=True.
+global:
+  image:
+    repository: docker.io/harness/argocd
+    tag: v3.3.10
+
+harnessAgent:
+  metadata:
+    name: ""
+  spec:
+    name: ""
+    scope: ORG
+    apiKeySecretRef: harness-api-key-secret
+    tokenSecretRef: ""
+    projectMapping:
+      projectId: ""
+      AppProject: default
+
+appProject:
+  enabled: true
+  name: default
+  description: AppProject for the remote controller E2E
+
+gitopsAgent:
+  enabled: true
+  harness:
+    configMap:
+      logLevel: info
+    identity:
+      accountIdentifier: ""
+      orgIdentifier: ""
+      projectIdentifier: ""
+      agentIdentifier: ""
+    argocdHarnessPlugin:
+      enabled: true
+  agent:
+    harnessName: ""
+    replicas: 0
+    existingSecrets:
+      agentToken: ""
+  argo-cd:
+    crds:
+      install: true
+      keep: true
+    configs:
+      cm:
+        cluster.inClusterEnabled: true
+    redis:
+      image:
+        repository: docker.io/harness/redis
+        tag: 7.4.8
+    repoServer:
+      env:
+        - name: HELM_PLUGINS
+          value: /helm-sops-tools/helm-plugins/
+        - name: HELM_SECRETS_CURL_PATH
+          value: /helm-sops-tools/curl
+        - name: HELM_SECRETS_SOPS_PATH
+          value: /helm-sops-tools/sops
+        - name: HELM_SECRETS_KUBECTL_PATH
+          value: /helm-sops-tools/kubectl
+        - name: HELM_SECRETS_BACKEND
+          value: sops
+        - name: HELM_SECRETS_VALUES_ALLOW_SYMLINKS
+          value: "false"
+        - name: HELM_SECRETS_VALUES_ALLOW_ABSOLUTE_PATH
+          value: "true"
+        - name: HELM_SECRETS_VALUES_ALLOW_PATH_TRAVERSAL
+          value: "true"
+        - name: HELM_SECRETS_WRAPPER_ENABLED
+          value: "true"
+        - name: HELM_SECRETS_HELM_PATH
+          value: /usr/local/bin/helm
+        - name: PATH
+          value: /helm-sops-tools/helm-secrets:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      initContainers:
+        - name: sops-helm-secrets-tool
+          image: docker.io/harness/gitops-agent-installer-helper:v0.0.16
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          command: [sh, -ec]
+          args:
+            - |
+              cp -r /custom-tools/. /helm-sops-tools
+              cp /helm-sops-tools/helm-plugins/helm-secrets/scripts/wrapper/helm.sh /helm-sops-tools/helm
+              mkdir -p /helm-sops-tools/helm-secrets
+              cp /helm-sops-tools/helm-plugins/helm-secrets/scripts/wrapper/helm.sh /helm-sops-tools/helm-secrets/helm
+              chmod +x /helm-sops-tools/helm-secrets/*
+              chmod +x /helm-sops-tools/*
+          volumeMounts:
+            - mountPath: /helm-sops-tools
+              name: helm-sops-tools
+      extraContainers:
+        - name: argocd-harness-plugin
+          image: docker.io/harness/gitops-agent-installer-helper:v0.0.16
+          imagePullPolicy: IfNotPresent
+          command: [/var/run/argocd/argocd-cmp-server]
+          resources:
+            requests:
+              cpu: "0.5"
+              memory: 512Mi
+            limits:
+              cpu: "0.5"
+              memory: 512Mi
+          securityContext:
+            capabilities:
+              drop:
+                - NET_RAW
+            runAsGroup: 999
+            runAsUser: 999
+          volumeMounts:
+            - mountPath: /var/run/argocd
+              name: var-files
+            - mountPath: /home/argocd/cmp-server/plugins
+              name: plugins
+            - mountPath: /tmp
+              name: tmp
+            - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              name: argocd-harness-plugin
+              subPath: harness.yaml

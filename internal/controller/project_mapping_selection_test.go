@@ -1,194 +1,75 @@
 package controller
 
 import (
-	stderrors "errors"
+	"reflect"
 	"testing"
-
-	"github.com/harness/harness-go-sdk/harness/nextgen"
 )
 
-const (
-	myAgentIdentifier  = "my-agent"
-	hubAgentIdentifier = "hubagent"
-)
-
-func TestSelectArgoProjectIDFromV2Mappings_DeterministicScopedMatch(t *testing.T) {
-	mappings := []nextgen.V1AppProjectMappingV2{
-		{
-			AccountIdentifier: "acc",
-			OrgIdentifier:     "org",
-			ProjectIdentifier: "proj",
-			ArgoProjectName:   "z-proj",
-		},
-		{
-			AccountIdentifier: "acc",
-			OrgIdentifier:     "org",
-			ProjectIdentifier: "proj",
-			ArgoProjectName:   "a-proj",
-		},
+func TestScopedAgentIdentifier(t *testing.T) {
+	testCases := []struct {
+		name       string
+		identifier string
+		want       string
+	}{
+		{name: "empty", identifier: "", want: ""},
+		{name: "whitespace", identifier: "  ", want: ""},
+		{name: "trims", identifier: "  my-agent  ", want: "my-agent"},
+		{name: "raw", identifier: "my-agent", want: "my-agent"},
+		{name: "prefixed", identifier: "org.my-agent", want: "org.my-agent"},
 	}
 
-	got, err := selectArgoProjectIDFromV2Mappings(mappings, "acc", "org", "proj")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "a-proj" {
-		t.Fatalf("expected deterministic lexical selection 'a-proj', got %q", got)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := scopedAgentIdentifier(testCase.identifier); got != testCase.want {
+				t.Fatalf("scopedAgentIdentifier(%q) = %q, want %q", testCase.identifier, got, testCase.want)
+			}
+		})
 	}
 }
 
-func TestSelectArgoProjectIDFromV2Mappings_NotFound(t *testing.T) {
-	_, err := selectArgoProjectIDFromV2Mappings(nil, "acc", "org", "proj")
-	if !stderrors.Is(err, errArgoProjectMappingNotFound) {
-		t.Fatalf("expected errArgoProjectMappingNotFound, got %v", err)
+func TestScopedPathAgentIdentifierCandidates(t *testing.T) {
+	testCases := []struct {
+		name       string
+		scope      string
+		identifier string
+		want       []string
+	}{
+		{name: "empty", scope: "ORG", identifier: " ", want: nil},
+		{name: "org", scope: "ORG", identifier: "hubagent", want: []string{"org.hubagent", "hubagent"}},
+		{name: "account", scope: "ACCOUNT", identifier: "hubagent", want: []string{"account.hubagent", "hubagent"}},
+		{name: "prefixed", scope: "ORG", identifier: "org.hubagent", want: []string{"org.hubagent", "hubagent"}},
+		{name: "project", scope: "PROJECT", identifier: "hubagent", want: []string{"hubagent"}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := scopedPathAgentIdentifierCandidates(testCase.scope, testCase.identifier)
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("unexpected candidates: got %#v, want %#v", got, testCase.want)
+			}
+		})
 	}
 }
 
-func TestSelectArgoProjectIDFromV2Mappings_ScopeMismatch(t *testing.T) {
-	mappings := []nextgen.V1AppProjectMappingV2{
-		{
-			AccountIdentifier: "acc",
-			OrgIdentifier:     "other-org",
-			ProjectIdentifier: "other-proj",
-			ArgoProjectName:   "p1",
-		},
+func TestProjectIdentifierForAgentScope(t *testing.T) {
+	testCases := []struct {
+		name      string
+		scope     string
+		projectID string
+		want      string
+	}{
+		{name: "project", scope: "PROJECT", projectID: "my-project", want: "my-project"},
+		{name: "project case insensitive and trimmed", scope: "project", projectID: " my-project ", want: "my-project"},
+		{name: "org", scope: "ORG", projectID: "my-project", want: ""},
+		{name: "account", scope: "ACCOUNT", projectID: "my-project", want: ""},
 	}
 
-	_, err := selectArgoProjectIDFromV2Mappings(mappings, "acc", "org", "proj")
-	if !stderrors.Is(err, errArgoProjectScopeMismatch) {
-		t.Fatalf("expected errArgoProjectScopeMismatch, got %v", err)
-	}
-}
-
-func TestSelectArgoProjectIDFromV1Mapping_DeterministicScopedMatch(t *testing.T) {
-	mappings := map[string]nextgen.Servicev1Project{
-		"z-proj": {
-			OrgIdentifier:     "org",
-			ProjectIdentifier: "proj",
-		},
-		"a-proj": {
-			OrgIdentifier:     "org",
-			ProjectIdentifier: "proj",
-		},
-	}
-
-	got, err := selectArgoProjectIDFromV1Mapping(mappings, "org", "proj")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "a-proj" {
-		t.Fatalf("expected deterministic lexical selection 'a-proj', got %q", got)
-	}
-}
-
-func TestSelectArgoProjectIDFromV1Mapping_ScopeMismatch(t *testing.T) {
-	mappings := map[string]nextgen.Servicev1Project{
-		"proj-a": {
-			OrgIdentifier:     "other-org",
-			ProjectIdentifier: "other-proj",
-		},
-	}
-
-	_, err := selectArgoProjectIDFromV1Mapping(mappings, "org", "proj")
-	if !stderrors.Is(err, errArgoProjectScopeMismatch) {
-		t.Fatalf("expected errArgoProjectScopeMismatch, got %v", err)
-	}
-}
-
-func TestScopedAgentIdentifier_OrgScopeKeepsIdentifier(t *testing.T) {
-	got := scopedAgentIdentifier(myAgentIdentifier)
-	if got != myAgentIdentifier {
-		t.Fatalf("expected ORG scope identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_AlreadyPrefixedUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("org.my-agent")
-	if got != "org.my-agent" {
-		t.Fatalf("expected existing prefixed identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_OrgLikeIdentifierWithoutDotUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("orggitopsagent")
-	if got != "orggitopsagent" {
-		t.Fatalf("expected org-like identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_ProjectScopeUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier(myAgentIdentifier)
-	if got != myAgentIdentifier {
-		t.Fatalf("expected project scope identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_AccountScopeKeepsIdentifier(t *testing.T) {
-	got := scopedAgentIdentifier(myAgentIdentifier)
-	if got != myAgentIdentifier {
-		t.Fatalf("expected ACCOUNT scope identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_AccountScopeAlreadyPrefixedUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("account.my-agent")
-	if got != "account.my-agent" {
-		t.Fatalf("expected existing account-prefixed identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedAgentIdentifier_AccountLikeIdentifierWithoutDotUnchanged(t *testing.T) {
-	got := scopedAgentIdentifier("accountgitopsagent")
-	if got != "accountgitopsagent" {
-		t.Fatalf("expected account-like identifier to remain unchanged, got %q", got)
-	}
-}
-
-func TestScopedPathAgentIdentifierCandidates_OrgScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ORG", hubAgentIdentifier)
-	if len(got) != 2 || got[0] != "org.hubagent" || got[1] != hubAgentIdentifier {
-		t.Fatalf("unexpected ORG candidates: %#v", got)
-	}
-}
-
-func TestScopedPathAgentIdentifierCandidates_AccountScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ACCOUNT", hubAgentIdentifier)
-	if len(got) != 2 || got[0] != "account.hubagent" || got[1] != hubAgentIdentifier {
-		t.Fatalf("unexpected ACCOUNT candidates: %#v", got)
-	}
-}
-
-func TestScopedPathAgentIdentifierCandidates_PrefixedInput(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("ORG", "org."+hubAgentIdentifier)
-	if len(got) != 2 || got[0] != "org."+hubAgentIdentifier || got[1] != hubAgentIdentifier {
-		t.Fatalf("unexpected prefixed candidates: %#v", got)
-	}
-}
-
-func TestScopedPathAgentIdentifierCandidates_ProjectScope(t *testing.T) {
-	got := scopedPathAgentIdentifierCandidates("PROJECT", hubAgentIdentifier)
-	if len(got) != 1 || got[0] != "hubagent" {
-		t.Fatalf("unexpected PROJECT candidates: %#v", got)
-	}
-}
-
-func TestProjectIdentifierForAgentScope_ProjectKeepsProjectID(t *testing.T) {
-	got := projectIdentifierForAgentScope("PROJECT", "my-project")
-	if got != "my-project" {
-		t.Fatalf("expected project ID to be kept for PROJECT scope, got %q", got)
-	}
-}
-
-func TestProjectIdentifierForAgentScope_OrgOmitsProjectID(t *testing.T) {
-	got := projectIdentifierForAgentScope("ORG", "my-project")
-	if got != "" {
-		t.Fatalf("expected project ID to be omitted for ORG scope, got %q", got)
-	}
-}
-
-func TestProjectIdentifierForAgentScope_AccountOmitsProjectID(t *testing.T) {
-	got := projectIdentifierForAgentScope("ACCOUNT", "my-project")
-	if got != "" {
-		t.Fatalf("expected project ID to be omitted for ACCOUNT scope, got %q", got)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := projectIdentifierForAgentScope(testCase.scope, testCase.projectID)
+			if got != testCase.want {
+				t.Fatalf("unexpected project identifier: got %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }

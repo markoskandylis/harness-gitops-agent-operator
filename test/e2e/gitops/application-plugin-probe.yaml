@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hga-mapping-plugin-probe
+  namespace: controller-e2e
+  labels:
+    infrastructure.kandylis.co.uk/test: plugin-probe
+spec:
+  project: default
+  source:
+    repoURL:  https:///github.com:markoskandylis/harness-gitops-agent-operator.git 
+    targetRevision: HEAD
+    path: gitops/plugin-probe
+    plugin: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: plugin-probe-e2e
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

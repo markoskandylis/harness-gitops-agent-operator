@@ -1,3 +1,7 @@
+{{- /* The bundled Argo CD chart renders its CRDs as ordinary templates. Keep
+the AppProject out of Helm's initial object build and create it as a
+post-install hook, after those CRDs are established. Use the same hook on
+upgrade so its lifecycle and ordering stay consistent. */}}
 {{- if and .Values.appProject.enabled .Values.gitopsAgent.enabled }}
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject

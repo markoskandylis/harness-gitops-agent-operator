@@ -75,6 +75,17 @@
     "manager": {
       "type": "object",
       "properties": {
+        "apiKeySecretNamespace": {
+          "type": "string"
+        },
+        "appProjectPendingRetryInterval": {
+          "type": "string",
+          "minLength": 2
+        },
+        "harnessMappingResyncInterval": {
+          "type": "string",
+          "minLength": 2
+        },
         "healthProbe": {
           "type": "object",
           "properties": {
@@ -122,7 +133,7 @@
           "type": "array"
         }
       },
-      "required": ["healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
+      "required": ["apiKeySecretNamespace", "appProjectPendingRetryInterval", "harnessMappingResyncInterval", "healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
     },
     "enableServiceLinks": {
       "type": "boolean"

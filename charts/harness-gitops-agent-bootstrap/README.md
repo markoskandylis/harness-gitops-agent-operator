@@ -5,12 +5,19 @@ Bootstrap one Harness GitOps Agent instance managed by the
 
 1. Creates a `HarnessGitopsAgent` custom resource (phase one).
 2. The controller registers the agent with Harness, writes the agent token into
-   the Secret named by `tokenSecretRef`, and creates the optional AppProject
-   mapping.
-3. On upgrade with `gitopsAgent.enabled=true` (phase two), installs the
+   the Secret named by `tokenSecretRef`, and waits if an optional AppProject
+   mapping is configured but the AppProject does not exist or the Harness agent
+   is not yet Connected and Healthy.
+3. With `gitopsAgent.enabled=true`, installs the
    official [Harness gitops-helm chart](https://harness.github.io/gitops-helm/)
-   (Argo CD + GitOps agent), which consumes the controller-written token via
-   `agent.existingSecrets.agentToken`.
+   (Argo CD + GitOps agent). The runtime consumes the controller-written token
+   via `agent.existingSecrets.agentToken`.
+4. The bundled Argo CRDs are installed with the runtime. The AppProject runs as
+   a post-install/post-upgrade hook after those CRDs are established, so a clean
+   cluster can install the runtime and AppProject in one Helm operation.
+5. Once the AppProject exists and the Harness agent is Connected and Healthy,
+   the controller creates and verifies the exact mapping and periodically checks
+   both readiness and mapping state for external drift.
 
 The agent token never appears in values, manifests, or Helm release state —
 only the controller and the target-namespace Secret hold it.
@@ -19,11 +26,12 @@ only the controller and the target-namespace Secret hold it.
 
 - The operator (controller) is installed in the cluster and healthy
   (`charts/harness-gitops-agent-controller`).
-- A Secret with a Harness API key exists **in the release namespace**:
-  name per `harnessAgent.spec.apiKeySecretRef` (default
-  `harness-api-key-secret`), key `api_key`. Use a least-privilege Harness
-  service-account key scoped to the target org/project. Never commit or print
-  its value.
+- A Secret with a Harness API key exists in the namespace configured by the
+  controller's `manager.apiKeySecretNamespace`, or in this release namespace
+  when that setting is empty. Its name comes from
+  `harnessAgent.spec.apiKeySecretRef` (default `harness-api-key-secret`) and its
+  key is `api_key`. Use a least-privilege Harness service-account key scoped to
+  the target org/project. Never commit or print its value.
 - One agent instance per namespace: the runtime chart uses fixed component
   names (`gitops-agent`, `argocd-*`), and Harness expects one agent runtime per
   namespace.
@@ -53,6 +61,11 @@ kubectl get secret <tokenSecretRef> -n my-agent-ns
 helm upgrade my-agent . --namespace my-agent-ns \
   --reuse-values --set gitopsAgent.enabled=true --wait
 ```
+
+The AppProject uses Helm hook weight `0` with
+`before-hook-creation`. This ensures Argo CRDs exist before Helm asks
+Kubernetes to build the AppProject. On upgrade, Helm recreates the AppProject
+hook instead of patching it in place.
 
 Uninstalling the release deletes the CR; the controller finalizer then
 deregisters the agent from Harness.

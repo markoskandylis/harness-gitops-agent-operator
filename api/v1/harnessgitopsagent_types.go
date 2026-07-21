@@ -98,8 +98,8 @@ type HarnessGitopsAgentStatus struct {
 	// Used as the `project:` field in ApplicationSets and Applications.
 	ArgoProjectId string `json:"argoProjectId,omitempty"`
 
-	// ArgoProjectMappingId is the identifier returned by Harness after the AppProject
-	// mapping is created via AppProjectMappingServiceCreateV2. Used as an idempotency guard.
+	// ArgoProjectMappingId is the identifier returned by the most recent successful
+	// Harness mapping verification. It is an observation, not an idempotency guard.
 	// +optional
 	ArgoProjectMappingId string `json:"argoProjectMappingId,omitempty"`
 

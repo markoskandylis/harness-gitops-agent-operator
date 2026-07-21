@@ -20,8 +20,9 @@ harnessAgent:
       projectId: ""
       AppProject: ""
     existingAgentIdentifier: ""
-    # The Harness API key Secret must already exist in the release namespace
-    # with key "api_key". Never put its value in chart values.
+    # The Harness API key Secret must already exist in the controller-configured
+    # API key namespace, or this release namespace when no override is set. Its
+    # key is "api_key". Never put its value in chart values.
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: ""
 

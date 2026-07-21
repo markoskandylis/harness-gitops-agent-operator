@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,13 +48,20 @@ const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme                         *runtime.Scheme
+	APIKeySecretNamespace          string
+	AppProjectPendingRetryInterval time.Duration
+	HarnessMappingResyncInterval   time.Duration
+	mappingAPI                     appProjectMappingAPI
+	agentReadinessChecker          agentReadinessChecker
+	appProjectClient               dynamic.Interface
 }
 
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get
 
 // HarnessSession contains the client and authentication context for Harness API calls
 type HarnessSession struct {
@@ -211,17 +219,15 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	needsMapping := agentCR.Spec.ProjectMapping != nil
 
 	agentDone := agentCR.Status.AgentIdentifier != ""
-	argoProjectDone := !needsMapping || agentCR.Status.ArgoProjectId != ""
-	mappingDone := !needsMapping ||
-		agentCR.Status.ArgoProjectMappingId != "" ||
-		agentCR.Status.ArgoProjectId != ""
 	tokenSecretName := agentCR.Spec.TokenSecretRef
 	if tokenSecretName == "" {
 		tokenSecretName = agentCR.Name + "-agent-token"
 	}
 	tokenSecretReady := existingAgentMode || r.tokenSecretExists(ctx, agentCR, tokenSecretName)
 
-	if agentDone && argoProjectDone && mappingDone && tokenSecretReady {
+	// Mapping-enabled resources must verify Harness state on every event or
+	// periodic resync. Local status fields are observations, not completion guards.
+	if agentDone && !needsMapping && tokenSecretReady {
 		return ctrl.Result{}, nil
 	}
 
@@ -279,13 +285,18 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 				log.Error(err, "Failed to create or update token secret", "secret", tokenSecretName)
 				return ctrl.Result{}, err
 			}
+			// Re-read the Secret before mapping so Kubernetes, not local flow state,
+			// is the source of truth for the token prerequisite.
+			tokenSecretReady = r.tokenSecretExists(ctx, agentCR, tokenSecretName)
 			log.Info("Wrote agent token secret", "secret", tokenSecretName)
 		}
 	}
 
-	// Maps the in-cluster ArgoProject to the target Harness project via the API.
-	if needsMapping && agentCR.Status.ArgoProjectId == "" {
-		mappingId, err := r.createAppProjectMapping(
+	if needsMapping {
+		if !tokenSecretReady {
+			return ctrl.Result{RequeueAfter: r.appProjectPendingRetryInterval()}, nil
+		}
+		return r.reconcileAppProjectMapping(
 			ctx,
 			harnessSession,
 			agentCR,
@@ -293,21 +304,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 			mappingAppProject,
 			mappingProjectID,
 		)
-		if err != nil {
-			log.Error(err, "Failed to create AppProject mapping")
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, err
-		}
-		agentCR.Status.ArgoProjectId = mappingAppProject
-		if mappingId != "" {
-			agentCR.Status.ArgoProjectMappingId = mappingId
-		}
-		if err := r.Status().Update(ctx, agentCR); err != nil {
-			return ctrl.Result{}, err
-		}
-		log.Info("AppProject mapping resolved",
-			"mappingId", mappingId,
-			"argoProjectName", mappingAppProject,
-			"project", mappingProjectID)
 	}
 
 	return ctrl.Result{}, nil
@@ -401,19 +397,6 @@ func wrapHarnessAPIError(message string, err error) error {
 	return fmt.Errorf("%s: %w", message, err)
 }
 
-func harnessAPIErrorDetails(err error) string {
-	if err == nil {
-		return ""
-	}
-	if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-		body := strings.TrimSpace(string(swaggerErr.Body()))
-		if body != "" {
-			return fmt.Sprintf("%v (body: %s)", err, body)
-		}
-	}
-	return err.Error()
-}
-
 func isHarnessAgentNotFound(err error) bool {
 	swaggerErr, ok := err.(nextgen.GenericSwaggerError)
 	if !ok {
@@ -434,7 +417,11 @@ func isHarnessAgentAlreadyExists(err error) bool {
 
 func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent) (*HarnessSession, error) {
 	secret := &corev1.Secret{}
-	secretKey := client.ObjectKey{Name: agentCR.Spec.ApiKeySecretRef, Namespace: agentCR.Namespace}
+	secretNamespace := strings.TrimSpace(r.APIKeySecretNamespace)
+	if secretNamespace == "" {
+		secretNamespace = agentCR.Namespace
+	}
+	secretKey := client.ObjectKey{Name: agentCR.Spec.ApiKeySecretRef, Namespace: secretNamespace}
 	if err := r.Get(ctx, secretKey, secret); err != nil {
 		return nil, err
 	}
@@ -445,6 +432,10 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 	}
 
 	cfg := nextgen.NewConfiguration()
+	// Let controller-runtime own retries and rate limiting. The SDK default of
+	// ten internal retries can otherwise block the sole reconcile worker for
+	// minutes during a Harness 5xx response.
+	cfg.HTTPClient.RetryMax = 0
 	apiClient := nextgen.NewAPIClient(cfg)
 
 	authCtx := context.WithValue(ctx, nextgen.ContextAPIKey, nextgen.APIKey{
@@ -455,13 +446,4 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 		Client:  apiClient,
 		AuthCtx: authCtx,
 	}, nil
-}
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *HarnessGitopsAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrastructurev1.HarnessGitopsAgent{}).
-		Owns(&corev1.Secret{}). // Added to watch and own Secrets
-		Named("harnessgitopsagent").
-		Complete(r)
 }

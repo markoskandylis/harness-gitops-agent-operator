@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -61,6 +62,9 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var apiKeySecretNamespace string
+	var appProjectPendingRetryInterval time.Duration
+	var harnessMappingResyncInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -79,6 +83,24 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(
+		&apiKeySecretNamespace,
+		"api-key-secret-namespace",
+		"",
+		"Namespace containing each HarnessGitopsAgent API key Secret. Empty uses the agent CR namespace.",
+	)
+	flag.DurationVar(
+		&appProjectPendingRetryInterval,
+		"app-project-pending-retry-interval",
+		controller.DefaultAppProjectPendingRetryInterval,
+		"How often a mapping-enabled Agent retries while its AppProject is absent.",
+	)
+	flag.DurationVar(
+		&harnessMappingResyncInterval,
+		"harness-mapping-resync-interval",
+		controller.DefaultHarnessMappingResyncInterval,
+		"How often a ready AppProject mapping is reverified against Harness.",
+	)
 	opts := zap.Options{
 		Development: true,
 	}
@@ -86,6 +108,13 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	if err := controller.ValidateMappingIntervals(
+		appProjectPendingRetryInterval,
+		harnessMappingResyncInterval,
+	); err != nil {
+		setupLog.Error(err, "invalid mapping reconciliation intervals")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -179,8 +208,11 @@ func main() {
 	}
 
 	if err := (&controller.HarnessGitopsAgentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:                         mgr.GetClient(),
+		Scheme:                         mgr.GetScheme(),
+		APIKeySecretNamespace:          apiKeySecretNamespace,
+		AppProjectPendingRetryInterval: appProjectPendingRetryInterval,
+		HarnessMappingResyncInterval:   harnessMappingResyncInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HarnessGitopsAgent")
 		os.Exit(1)
