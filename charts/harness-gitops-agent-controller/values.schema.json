@@ -63,6 +63,18 @@
       },
       "required": ["create"]
     },
+    "crds": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "keep": {
+          "type": "boolean"
+        }
+      },
+      "required": ["enabled", "keep"]
+    },
     "leaderElection": {
       "type": "object",
       "properties": {
@@ -217,6 +229,7 @@
     "image",
     "serviceAccount",
     "rbac",
+    "crds",
     "leaderElection",
     "manager",
     "probes",

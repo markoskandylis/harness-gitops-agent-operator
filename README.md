@@ -65,7 +65,7 @@ Resources installed:
 2. RBAC (ClusterRole/ClusterRoleBinding)
 3. Leader election Role/RoleBinding
 4. Deployment
-5. CRD from `charts/harness-gitops-agent-controller/crds/`
+5. CRD (installed with the chart by default; `crds.enabled=true`, kept on uninstall via `helm.sh/resource-policy: keep`)
 
 ## Bootstrap Helm Chart (CR + GitOps Agent)
 
@@ -142,12 +142,9 @@ k3d image import -c hub harness-gitops-agent-operator:dev
 ### 3. Install controller
 
 ```sh
-kubectl apply -f charts/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
-
 helm upgrade --install hgac charts/harness-gitops-agent-controller \
   --namespace harness-system \
-  --create-namespace \
-  --skip-crds
+  --create-namespace
 ```
 
 ### 4. Verify controller

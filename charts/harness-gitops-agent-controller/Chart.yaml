@@ -2,7 +2,7 @@ apiVersion: v2
 name: harness-gitops-agent-controller
 description: Helm chart for the Harness GitOps Agent Kubernetes controller
 type: application
-version: 0.3.0
+version: 0.4.0
 appVersion: "v0.2.0"
 kubeVersion: ">=1.25.0-0"
 keywords:

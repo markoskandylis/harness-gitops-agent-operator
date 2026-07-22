@@ -20,6 +20,14 @@ serviceAccount:
 rbac:
   create: true
 
+# CRD lifecycle. The chart installs the HarnessGitopsAgent CRD by default and
+# annotates it with helm.sh/resource-policy: keep so `helm uninstall` never
+# removes it (deleting the CRD would delete every HarnessGitopsAgent). Set
+# enabled=false to manage the CRD out-of-band (for example, by a platform team).
+crds:
+  enabled: true
+  keep: true
+
 leaderElection:
   enabled: true
 

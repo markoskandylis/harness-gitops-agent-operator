@@ -1,17 +1,15 @@
-Step-by-step installation (manual CRD + chart):
+{{ .Chart.Name }} {{ .Chart.Version }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
-1. Install CRD first:
-   kubectl apply -f charts/harness-gitops-agent-controller/crds/harnessgitopsagents.infrastructure.kandylis.co.uk.yaml
+{{- if .Values.crds.enabled }}
+The HarnessGitopsAgent CRD was installed with the chart{{ if .Values.crds.keep }}, annotated helm.sh/resource-policy: keep so `helm uninstall` will not remove it{{ end }}.
+{{- else }}
+CRD install was skipped (crds.enabled=false) — ensure the HarnessGitopsAgent CRD is managed out-of-band.
+{{- end }}
 
-2. Install/upgrade chart without CRD management:
-   helm upgrade --install {{ .Release.Name }} {{ .Chart.Name }} \
-     --namespace {{ .Release.Namespace }} \
-     --create-namespace \
-     --skip-crds
+Verify the controller:
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "harness-gitops-agent-controller.fullname" . }}
+   kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "harness-gitops-agent-controller.fullname" . }} -f
 
-3. Verify resources:
-   kubectl get crd harnessgitopsagents.infrastructure.kandylis.co.uk
-   kubectl get deploy -n {{ .Release.Namespace }} {{ include "harness-gitops-agent-controller.fullname" . }}
-
-4. Follow controller logs:
-   kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "harness-gitops-agent-controller.fullname" . }} -f
+Next: create a HarnessGitopsAgent resource (see the harness-gitops-agent-bootstrap chart
+or test/manifests/) to register an agent. The API key Secret referenced by
+spec.apiKeySecretRef must exist{{ if .Values.manager.apiKeySecretNamespace }} in namespace "{{ .Values.manager.apiKeySecretNamespace }}"{{ else }} in the agent CR's namespace{{ end }}.
