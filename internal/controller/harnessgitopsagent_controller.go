@@ -45,10 +45,20 @@ const harnessAgentFinalizer = "infrastructure.kandylis.co.uk/finalizer"
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
 
+// ManagedByLabelKey/ManagedByLabelValue mark the token Secrets this controller
+// owns so the manager cache can watch only those Secrets instead of every Secret
+// in the cluster (least-privilege + lower memory). The API key Secret is
+// user-created and unlabeled, so it is read via the uncached API reader.
+const (
+	ManagedByLabelKey   = "app.kubernetes.io/managed-by"
+	ManagedByLabelValue = "harness-gitops-agent-operator"
+)
+
 // HarnessGitopsAgentReconciler reconciles a HarnessGitopsAgent object
 type HarnessGitopsAgentReconciler struct {
 	client.Client
 	Scheme                         *runtime.Scheme
+	APIReader                      client.Reader
 	APIKeySecretNamespace          string
 	AppProjectPendingRetryInterval time.Duration
 	HarnessMappingResyncInterval   time.Duration
@@ -57,10 +67,10 @@ type HarnessGitopsAgentReconciler struct {
 	appProjectClient               dynamic.Interface
 }
 
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get
 
 // HarnessSession contains the client and authentication context for Harness API calls
@@ -415,6 +425,17 @@ func isHarnessAgentAlreadyExists(err error) bool {
 	return strings.Contains(body, "agent already exists")
 }
 
+// apiReader returns a reader that bypasses the manager's label-scoped Secret
+// cache so the controller can read the user-created (unlabeled) API key Secret
+// and detect pre-existing token Secrets. Falls back to the cached client when
+// APIReader is unset (e.g. in unit tests).
+func (r *HarnessGitopsAgentReconciler) apiReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
 func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent) (*HarnessSession, error) {
 	secret := &corev1.Secret{}
 	secretNamespace := strings.TrimSpace(r.APIKeySecretNamespace)
@@ -422,7 +443,7 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 		secretNamespace = agentCR.Namespace
 	}
 	secretKey := client.ObjectKey{Name: agentCR.Spec.ApiKeySecretRef, Namespace: secretNamespace}
-	if err := r.Get(ctx, secretKey, secret); err != nil {
+	if err := r.apiReader().Get(ctx, secretKey, secret); err != nil {
 		return nil, err
 	}
 

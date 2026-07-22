@@ -151,6 +151,10 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 		if err := ctrl.SetControllerReference(agentCR, tokenSecret, r.Scheme); err != nil {
 			return err
 		}
+		if tokenSecret.Labels == nil {
+			tokenSecret.Labels = map[string]string{}
+		}
+		tokenSecret.Labels[ManagedByLabelKey] = ManagedByLabelValue
 		tokenSecret.Type = corev1.SecretTypeOpaque
 		if tokenSecret.Data == nil {
 			tokenSecret.Data = map[string][]byte{}
@@ -166,7 +170,7 @@ func (r *HarnessGitopsAgentReconciler) upsertAgentTokenSecret(
 // tokenSecretExists returns true if Secret/<secretName> already has GITOPS_AGENT_TOKEN set.
 func (r *HarnessGitopsAgentReconciler) tokenSecretExists(ctx context.Context, agentCR *infrastructurev1.HarnessGitopsAgent, secretName string) bool {
 	existing := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace}, existing); err != nil {
+	if err := r.apiReader().Get(ctx, client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace}, existing); err != nil {
 		return false
 	}
 	tok, ok := existing.Data[gitopsAgentTokenSecretKey]
