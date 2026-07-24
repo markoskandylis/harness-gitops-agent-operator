@@ -51,7 +51,6 @@ Output token secret (`spec.tokenSecretRef`) contains:
 
 - key: `GITOPS_AGENT_TOKEN`
 
-Note: legacy token key support was removed. Only `GITOPS_AGENT_TOKEN` is written.
 
 ## Controller Helm Chart
 

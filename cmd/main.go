@@ -26,10 +26,14 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -184,8 +188,20 @@ func main() {
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
+		Scheme:  scheme,
+		Metrics: metricsServerOptions,
+		// Restrict the Secret informer to Secrets this controller owns so the
+		// manager does not cache (or need list/watch on) every Secret in the
+		// cluster. The unlabeled API key Secret is read via the API reader.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Label: labels.SelectorFromSet(labels.Set{
+						controller.ManagedByLabelKey: controller.ManagedByLabelValue,
+					}),
+				},
+			},
+		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
@@ -209,6 +225,7 @@ func main() {
 
 	if err := (&controller.HarnessGitopsAgentReconciler{
 		Client:                         mgr.GetClient(),
+		APIReader:                      mgr.GetAPIReader(),
 		Scheme:                         mgr.GetScheme(),
 		APIKeySecretNamespace:          apiKeySecretNamespace,
 		AppProjectPendingRetryInterval: appProjectPendingRetryInterval,
