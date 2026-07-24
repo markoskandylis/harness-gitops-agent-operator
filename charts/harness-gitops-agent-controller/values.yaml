@@ -6,7 +6,7 @@ revisionHistoryLimit: 5
 
 image:
   repository: mkandylis/harness-gitops-agent-operator
-  tag: v0.2.0
+  tag: v0.3.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
