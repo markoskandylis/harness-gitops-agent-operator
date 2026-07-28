@@ -42,9 +42,39 @@ manager:
     port: 8081
   metrics:
     # Use "0" to disable metrics endpoint. For enabled metrics, keep bindAddress and port aligned.
+    # Disabling also removes the metrics Service and ServiceMonitor below, so
+    # the three can never disagree.
     bindAddress: "0"
     port: 8080
     secure: true
+    service:
+      # Created whenever metrics are enabled. Exists so the ServiceMonitor has
+      # something to select, and so the endpoint can be port-forwarded directly.
+      annotations: {}
+    serviceMonitor:
+      # OFF BY DEFAULT because ServiceMonitor is a prometheus-operator CRD:
+      # rendering it on a cluster without kube-prometheus-stack fails the whole
+      # install with "no matches for kind ServiceMonitor". Turn on where
+      # Prometheus is present.
+      #
+      # This is what makes the operator observable rather than merely alive.
+      # Without it Prometheus sees only cAdvisor CPU/memory, and a reconciler
+      # looping on a failure is indistinguishable from a healthy one. Enabling
+      # it exposes controller_runtime_reconcile_errors_total,
+      # workqueue_depth and controller_runtime_reconcile_time_seconds.
+      enabled: false
+      # Defaults to the release namespace. Set only if your Prometheus is
+      # restricted to scraping ServiceMonitors from one specific namespace.
+      namespace: ""
+      # A default kube-prometheus-stack selects only ServiceMonitors labelled
+      # `release: <its-release-name>`. Not needed when it is installed with
+      # serviceMonitorSelectorNilUsesHelmValues=false, which selects any.
+      additionalLabels: {}
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings: []
+      metricRelabelings: []
   # Keep HTTP/2 disabled by default due to known HTTP/2 CVEs.
   enableHTTP2: false
   # Controller-runtime zap development mode; set false for production-like JSON logs.
