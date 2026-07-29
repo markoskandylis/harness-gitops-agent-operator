@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,12 +48,12 @@ func (r *HarnessGitopsAgentReconciler) createHarnessAgent(
 	resp, _, err := session.Client.AgentApi.AgentServiceForServerCreate(session.AuthCtx, *createReq)
 	if err != nil {
 		if isHarnessAgentAlreadyExists(err) {
-			return scopedAgentIdentifier(agentCR.Spec.Identifier), nil, true, nil
+			return strings.TrimSpace(agentCR.Spec.Identifier), nil, true, nil
 		}
 		return "", nil, false, err
 	}
 
-	return scopedAgentIdentifier(resp.Identifier), resp.Credentials, false, nil
+	return strings.TrimSpace(resp.Identifier), resp.Credentials, false, nil
 }
 
 // deleteHarnessAgent deletes an agent using the current API request contract.
@@ -63,7 +64,7 @@ func (r *HarnessGitopsAgentReconciler) deleteHarnessAgent(
 ) error {
 	_, _, err := session.Client.AgentApi.AgentServiceForServerDelete(
 		session.AuthCtx,
-		scopedAgentIdentifier(agentIdentifier),
+		strings.TrimSpace(agentIdentifier),
 		&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
 			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
 			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),

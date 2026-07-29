@@ -17,11 +17,22 @@
 {{- if ne $tokenSecretRef $runtimeTokenSecretRef }}
 {{- fail "harnessAgent.spec.tokenSecretRef must match gitopsAgent.agent.existingSecrets.agentToken" }}
 {{- end }}
+{{- $mappingOrgID := trim (default "" .Values.harnessAgent.spec.projectMapping.orgId) -}}
 {{- $mappingProjectID := trim (default "" .Values.harnessAgent.spec.projectMapping.projectId) -}}
 {{- $mappingAppProject := trim (default "" .Values.harnessAgent.spec.projectMapping.AppProject) -}}
 {{- $hasMapping := or (ne $mappingProjectID "") (ne $mappingAppProject "") -}}
 {{- if and $hasMapping (or (eq $mappingProjectID "") (eq $mappingAppProject "")) }}
 {{- fail "both projectMapping.projectId and projectMapping.AppProject are required" }}
+{{- end }}
+{{- /*
+  Fail the render rather than ship a CR the controller must reject. At ACCOUNT
+  scope $orgID is empty by design, so a mapping has no org to fall back to and
+  the org must be given per mapping. Getting this wrong is silent in the worst
+  way: the AppProject is still created on the cluster, so it looks like it
+  worked while nothing is mapped in Harness.
+*/ -}}
+{{- if and $hasMapping (eq $mappingOrgID "") (eq $orgID "") }}
+{{- fail "harnessAgent.spec.projectMapping.orgId is required at ACCOUNT scope: an ACCOUNT-scoped agent has no org of its own, so the org that owns projectMapping.projectId cannot be inferred" }}
 {{- end }}
 apiVersion: infrastructure.kandylis.co.uk/v1
 kind: HarnessGitopsAgent
@@ -57,6 +68,9 @@ spec:
   {{- end }}
   {{- if $hasMapping }}
   projectMapping:
+    {{- if $mappingOrgID }}
+    orgId: {{ $mappingOrgID | quote }}
+    {{- end }}
     projectId: {{ $mappingProjectID | quote }}
     AppProject: {{ $mappingAppProject | quote }}
   {{- end }}

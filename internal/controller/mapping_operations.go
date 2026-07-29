@@ -14,6 +14,7 @@ import (
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 )
@@ -28,19 +29,23 @@ var (
 const (
 	mappingReadyConditionType = "MappingReady"
 
-	mappingReasonAppProjectNotFound = "AppProjectNotFound"
-	mappingReasonAgentNotFound      = "AgentNotFound"
-	mappingReasonAgentNotHealthy    = "AgentNotHealthy"
-	mappingReasonMappingCreated     = "MappingCreated"
-	mappingReasonMappingVerified    = "MappingVerified"
-	mappingReasonMappingMismatch    = "MappingMismatch"
-	mappingReasonVerificationFailed = "MappingVerificationFailed"
+	mappingReasonAppProjectNotFound    = "AppProjectNotFound"
+	mappingReasonAgentNotFound         = "AgentNotFound"
+	mappingReasonAgentNotHealthy       = "AgentNotHealthy"
+	mappingReasonMappingCreated        = "MappingCreated"
+	mappingReasonMappingVerified       = "MappingVerified"
+	mappingReasonMappingMismatch       = "MappingMismatch"
+	mappingReasonVerificationFailed    = "MappingVerificationFailed"
+	mappingReasonInvalidProjectMapping = "InvalidProjectMapping"
 
 	// DefaultAppProjectPendingRetryInterval bounds initial mapping latency while
 	// the AppProject is waiting to be installed by the bootstrap chart.
 	DefaultAppProjectPendingRetryInterval = 20 * time.Second
 	// DefaultHarnessMappingResyncInterval periodically verifies external state.
 	DefaultHarnessMappingResyncInterval = 5 * time.Minute
+	// DefaultHarnessHTTPTimeout caps the full round-trip of a single Harness API
+	// attempt.
+	DefaultHarnessHTTPTimeout = 60 * time.Second
 	// MinimumMappingInterval prevents invalid or accidental tight reconcile loops.
 	MinimumMappingInterval = time.Second
 )
@@ -76,16 +81,27 @@ func (r *HarnessGitopsAgentReconciler) harnessMappingResyncInterval() time.Durat
 	return DefaultHarnessMappingResyncInterval
 }
 
-type appProjectMappingRequest struct {
-	AgentIdentifier        string
-	AccountIdentifier      string
-	OrgIdentifier          string
-	AgentProjectIdentifier string
-	ProjectIdentifier      string
-	ArgoProjectName        string
-	AgentScope             string
+type harnessScope struct {
+	OrgIdentifier     string
+	ProjectIdentifier string
 }
 
+type appProjectMappingRequest struct {
+	AccountIdentifier string
+	AgentIdentifier   string
+	AgentScope        string
+	// Agent locates the agent being queried.
+	Agent harnessScope
+
+	// Mapping describes the Harness project the AppProject is mapped to. The
+	// Create body and selectExactAppProjectMapping use this and nothing else.
+	Mapping harnessScope
+
+	ArgoProjectName string
+}
+
+// appProjectMappingAPI isolates the Harness SDK project-mapping calls
+// (List/Create/Delete) behind a seam so tests can substitute a fake.
 type appProjectMappingAPI interface {
 	List(
 		ctx context.Context,
@@ -93,6 +109,12 @@ type appProjectMappingAPI interface {
 		request appProjectMappingRequest,
 	) ([]nextgen.V1AppProjectMappingV2, error)
 	Create(ctx context.Context, session *HarnessSession, request appProjectMappingRequest) error
+	Delete(
+		ctx context.Context,
+		session *HarnessSession,
+		request appProjectMappingRequest,
+		mappingID string,
+	) error
 }
 
 type harnessAgentReadiness struct {
@@ -128,35 +150,87 @@ func (r *HarnessGitopsAgentReconciler) gitOpsAgentReadinessChecker() agentReadin
 	return sdkAgentReadinessChecker{}
 }
 
-// deleteAppProjectMapping removes a mapping created for an existing agent.
+// deleteAppProjectMapping removes the mapping this resource owns, for the shared
+// (existing agent) path where the agent itself must survive.
+//
+// It re-Lists rather than trusting Status.ArgoProjectMappingId. A mapping can be
+// edited in place (PUT /gitops/api/v2/agents/{agent}/appprojectsmapping/{id}), so
+// a remembered ID proves the row still exists, not that it is still ours. Only
+// the full tuple proves identity, which is the same guarantee the create path
+// relies on.
+//
+// Absent or mismatched means there is nothing of ours to clean up, so both return
+// nil and let the finalizer drop. Refusing to delete is correct; blocking
+// deletion over someone else's mapping would strand the resource forever.
 func (r *HarnessGitopsAgentReconciler) deleteAppProjectMapping(
+	ctx context.Context,
 	session *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
-	existingAgentIdentifier string,
-	mappingID string,
-	mappingProjectID string,
+	agentIdentifier string,
+	target *projectMappingTarget,
 ) error {
-	_, _, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
-		session.AuthCtx,
-		scopedAgentIdentifier(existingAgentIdentifier),
-		mappingID,
-		&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
-			AccountIdentifier: optional.NewString(agentCR.Spec.AccountId),
-			OrgIdentifier:     optionalStr(agentCR.Spec.OrgId),
-			ProjectIdentifier: optionalStr(mappingProjectID),
-		},
-	)
-	if err == nil {
+	if target == nil {
 		return nil
 	}
 
-	if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
-		body := strings.ToLower(string(swaggerErr.Body()))
-		if strings.Contains(body, "not found") {
+	log := logf.FromContext(ctx)
+	request := appProjectMappingRequestFor(agentCR, agentIdentifier, target)
+
+	mappings, err := r.appProjectMappingAPI().List(ctx, session, request)
+	if err != nil {
+		return err
+	}
+
+	mapping, err := selectExactAppProjectMapping(mappings, request)
+	if err != nil {
+		switch {
+		case stderrors.Is(err, errArgoProjectMappingNotFound):
+			log.Info("AppProject mapping already absent; nothing to delete",
+				"appProject", target.AppProject)
 			return nil
+		case stderrors.Is(err, errAppProjectMappingMismatch):
+			log.Info("Refusing to delete an AppProject mapping that does not match this resource",
+				"appProject", target.AppProject,
+				"org", target.OrgID,
+				"project", target.ProjectID)
+			return nil
+		default:
+			return err
 		}
 	}
-	return err
+
+	if remembered := strings.TrimSpace(agentCR.Status.ArgoProjectMappingId); remembered != "" &&
+		remembered != strings.TrimSpace(mapping.Identifier) {
+		log.Info("AppProject mapping was recreated outside the controller; deleting the live one",
+			"rememberedId", remembered, "liveId", mapping.Identifier)
+	}
+
+	log.Info("Deleting AppProject mapping", "mappingId", mapping.Identifier)
+	return r.appProjectMappingAPI().Delete(ctx, session, request, mapping.Identifier)
+}
+
+// appProjectMappingRequestFor is the single place the two Harness scopes are
+// derived from a CR. Both the reconcile and the delete path go through it so the
+// agent/mapping split can only ever be got right once.
+func appProjectMappingRequestFor(
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentIdentifier string,
+	target *projectMappingTarget,
+) appProjectMappingRequest {
+	return appProjectMappingRequest{
+		AccountIdentifier: strings.TrimSpace(agentCR.Spec.AccountId),
+		AgentIdentifier:   strings.TrimSpace(agentIdentifier),
+		AgentScope:        strings.TrimSpace(agentCR.Spec.Scope),
+		Agent: harnessScope{
+			OrgIdentifier:     strings.TrimSpace(agentCR.Spec.OrgId),
+			ProjectIdentifier: projectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
+		},
+		Mapping: harnessScope{
+			OrgIdentifier:     target.OrgID,
+			ProjectIdentifier: target.ProjectID,
+		},
+		ArgoProjectName: target.AppProject,
+	}
 }
 
 func (sdkAppProjectMappingAPI) List(
@@ -178,8 +252,8 @@ func (sdkAppProjectMappingAPI) List(
 				candidate,
 				&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
 					AccountIdentifier: optional.NewString(request.AccountIdentifier),
-					OrgIdentifier:     optionalStr(request.OrgIdentifier),
-					ProjectIdentifier: optionalStr(request.AgentProjectIdentifier),
+					OrgIdentifier:     optionalStr(request.Agent.OrgIdentifier),
+					ProjectIdentifier: optionalStr(request.Agent.ProjectIdentifier),
 					ArgoProjectName:   optional.NewString(request.ArgoProjectName),
 				},
 			)
@@ -215,8 +289,8 @@ func (sdkAppProjectMappingAPI) Create(
 			nextgen.V1AppProjectMappingCreateRequestV2{
 				AgentIdentifier:   candidate,
 				AccountIdentifier: request.AccountIdentifier,
-				OrgIdentifier:     request.OrgIdentifier,
-				ProjectIdentifier: request.ProjectIdentifier,
+				OrgIdentifier:     request.Mapping.OrgIdentifier,
+				ProjectIdentifier: request.Mapping.ProjectIdentifier,
 				ArgoProjectName:   request.ArgoProjectName,
 			},
 			candidate,
@@ -230,6 +304,45 @@ func (sdkAppProjectMappingAPI) Create(
 		lastErr = safeHarnessAPIError("create AppProject mapping", candidate, httpResponse, err)
 	}
 	return lastErr
+}
+
+func (sdkAppProjectMappingAPI) Delete(
+	ctx context.Context,
+	session *HarnessSession,
+	request appProjectMappingRequest,
+	mappingID string,
+) error {
+	_ = ctx
+	candidates := scopedPathAgentIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
+	if len(candidates) == 0 {
+		return fmt.Errorf("delete AppProject mapping: empty agent identifier")
+	}
+
+	for _, candidate := range candidates {
+		_, httpResponse, err := session.Client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
+			session.AuthCtx,
+			candidate,
+			mappingID,
+			&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
+				AccountIdentifier: optional.NewString(request.AccountIdentifier),
+				OrgIdentifier:     optionalStr(request.Mapping.OrgIdentifier),
+				ProjectIdentifier: optionalStr(request.Mapping.ProjectIdentifier),
+			},
+		)
+		if err == nil {
+			return nil
+		}
+		// Already gone is the desired end state; try the next identifier shape
+		// in case this one was simply the wrong path form.
+		if isHarnessNotFound(httpResponse, err) {
+			continue
+		}
+		// A non-404 is authoritative and must not be retried on an alternate
+		// path: the retry cannot succeed for a different reason and can block
+		// the single reconcile worker for up to another full client timeout.
+		return safeHarnessAPIError("delete AppProject mapping", candidate, httpResponse, err)
+	}
+	return nil
 }
 
 func (sdkAgentReadinessChecker) Readiness(
@@ -314,9 +427,9 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 	session *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	agentIdentifier string,
-	argoProjectName string,
-	projectID string,
+	target *projectMappingTarget,
 ) (ctrl.Result, error) {
+	argoProjectName := target.AppProject
 	exists, err := r.appProjectExists(ctx, agentCR.Namespace, argoProjectName)
 	if err != nil {
 		conditionErr := r.setMappingCondition(
@@ -381,15 +494,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 		return ctrl.Result{RequeueAfter: r.appProjectPendingRetryInterval()}, nil
 	}
 
-	request := appProjectMappingRequest{
-		AgentIdentifier:        strings.TrimSpace(agentIdentifier),
-		AccountIdentifier:      strings.TrimSpace(agentCR.Spec.AccountId),
-		OrgIdentifier:          strings.TrimSpace(agentCR.Spec.OrgId),
-		AgentProjectIdentifier: projectIdentifierForAgentScope(agentCR.Spec.Scope, agentCR.Spec.ProjectId),
-		ProjectIdentifier:      strings.TrimSpace(projectID),
-		ArgoProjectName:        strings.TrimSpace(argoProjectName),
-		AgentScope:             strings.TrimSpace(agentCR.Spec.Scope),
-	}
+	request := appProjectMappingRequestFor(agentCR, agentIdentifier, target)
 	mapping, created, err := r.ensureAppProjectMapping(ctx, session, request)
 	if err != nil {
 		reason := mappingReasonVerificationFailed
@@ -472,8 +577,8 @@ func selectExactAppProjectMapping(
 
 		if agentIdentifiersEquivalent(request.AgentScope, mapping.AgentIdentifier, request.AgentIdentifier) &&
 			strings.TrimSpace(mapping.AccountIdentifier) == request.AccountIdentifier &&
-			strings.TrimSpace(mapping.OrgIdentifier) == request.OrgIdentifier &&
-			strings.TrimSpace(mapping.ProjectIdentifier) == request.ProjectIdentifier &&
+			strings.TrimSpace(mapping.OrgIdentifier) == request.Mapping.OrgIdentifier &&
+			strings.TrimSpace(mapping.ProjectIdentifier) == request.Mapping.ProjectIdentifier &&
 			strings.TrimSpace(mapping.Identifier) != "" {
 			exact = append(exact, mapping)
 			continue
@@ -493,8 +598,8 @@ func selectExactAppProjectMapping(
 			errAppProjectMappingMismatch,
 			request.ArgoProjectName,
 			request.AccountIdentifier,
-			request.OrgIdentifier,
-			request.ProjectIdentifier,
+			request.Mapping.OrgIdentifier,
+			request.Mapping.ProjectIdentifier,
 			request.AgentIdentifier,
 		)
 	}

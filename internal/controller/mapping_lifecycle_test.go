@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
+	corev1 "k8s.io/api/core/v1"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -37,15 +38,23 @@ type fakeAppProjectMappingAPI struct {
 	createErr   error
 	listCalls   int
 	createCalls int
+	deleteCalls int
+	deletedIDs  []string
+	// Captured requests. The agent/mapping scope split is only observable in
+	// what actually reaches the API, so the ACCOUNT-scope tests assert on these.
+	listRequests   []appProjectMappingRequest
+	createRequests []appProjectMappingRequest
+	deleteRequests []appProjectMappingRequest
 }
 
 func (f *fakeAppProjectMappingAPI) List(
 	_ context.Context,
 	_ *HarnessSession,
-	_ appProjectMappingRequest,
+	request appProjectMappingRequest,
 ) ([]nextgen.V1AppProjectMappingV2, error) {
 	index := f.listCalls
 	f.listCalls++
+	f.listRequests = append(f.listRequests, request)
 	if index >= len(f.listResults) {
 		return nil, nil
 	}
@@ -56,10 +65,23 @@ func (f *fakeAppProjectMappingAPI) List(
 func (f *fakeAppProjectMappingAPI) Create(
 	_ context.Context,
 	_ *HarnessSession,
-	_ appProjectMappingRequest,
+	request appProjectMappingRequest,
 ) error {
 	f.createCalls++
+	f.createRequests = append(f.createRequests, request)
 	return f.createErr
+}
+
+func (f *fakeAppProjectMappingAPI) Delete(
+	_ context.Context,
+	_ *HarnessSession,
+	request appProjectMappingRequest,
+	mappingID string,
+) error {
+	f.deleteCalls++
+	f.deletedIDs = append(f.deletedIDs, mappingID)
+	f.deleteRequests = append(f.deleteRequests, request)
+	return nil
 }
 
 type fakeAgentReadinessChecker struct {
@@ -81,7 +103,13 @@ func (f *fakeAgentReadinessChecker) Readiness(
 func TestMappingWaitsForAppProject(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{}
 	readinessChecker := newReadyAgentChecker()
-	reconciler, agent := newMappingTestReconciler(t, false, mappingAPI, readinessChecker, infrastructurev1.HarnessGitopsAgentStatus{})
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		false,
+		mappingAPI,
+		readinessChecker,
+	)
 
 	result, err := reconcileMappingForTest(t, reconciler, agent)
 	if err != nil {
@@ -96,22 +124,18 @@ func TestMappingWaitsForAppProject(t *testing.T) {
 	if readinessChecker.calls != 0 {
 		t.Fatalf("Harness agent was checked before AppProject existed: %d calls", readinessChecker.calls)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonAppProjectNotFound)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonAppProjectNotFound)
 }
 
 func TestMissingAppProjectRetainsVerifiedMappingIdentity(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{}
 	readinessChecker := newReadyAgentChecker()
-	reconciler, agent := newMappingTestReconciler(
-		t,
-		false,
-		mappingAPI,
-		readinessChecker,
-		infrastructurev1.HarnessGitopsAgentStatus{
-			ArgoProjectId:        mappingTestAppProject,
-			ArgoProjectMappingId: "verified-mapping",
-		},
-	)
+	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		ArgoProjectId:        mappingTestAppProject,
+		ArgoProjectMappingId: "verified-mapping",
+	}
+	reconciler, agent := newMappingTestReconciler(t, agent, false, mappingAPI, readinessChecker)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
 		t.Fatalf("reconcile mapping: %v", err)
@@ -124,17 +148,17 @@ func TestMissingAppProjectRetainsVerifiedMappingIdentity(t *testing.T) {
 			current.Status,
 		)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonAppProjectNotFound)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonAppProjectNotFound)
 }
 
 func TestMappingUsesConfiguredIntervals(t *testing.T) {
 	retryInterval := 7 * time.Second
 	retryReconciler, retryAgent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		false,
 		&fakeAppProjectMappingAPI{},
 		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 	retryReconciler.AppProjectPendingRetryInterval = retryInterval
 	retryResult, err := reconcileMappingForTest(t, retryReconciler, retryAgent)
@@ -148,12 +172,12 @@ func TestMappingUsesConfiguredIntervals(t *testing.T) {
 	resyncInterval := 7 * time.Minute
 	resyncReconciler, resyncAgent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		true,
 		&fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{
-			mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", mappingTestProject)},
+			mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", "org.", mappingTestOrg, mappingTestProject)},
 		}}},
 		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 	resyncReconciler.HarnessMappingResyncInterval = resyncInterval
 	resyncResult, err := reconcileMappingForTest(t, resyncReconciler, resyncAgent)
@@ -183,10 +207,16 @@ func TestValidateMappingIntervals(t *testing.T) {
 func TestMappingIsCreatedAndVerifiedAfterAppProjectAppears(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
 		{},
-		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-created", mappingTestProject)}},
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-created", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
 	readinessChecker := newReadyAgentChecker()
-	reconciler, agent := newMappingTestReconciler(t, true, mappingAPI, readinessChecker, infrastructurev1.HarnessGitopsAgentStatus{})
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		true,
+		mappingAPI,
+		readinessChecker,
+	)
 
 	result, err := reconcileMappingForTest(t, reconciler, agent)
 	if err != nil {
@@ -203,14 +233,14 @@ func TestMappingIsCreatedAndVerifiedAfterAppProjectAppears(t *testing.T) {
 
 func TestExistingMatchingMappingIsRetrievedAndStored(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
-		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", mappingTestProject)}},
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
@@ -226,16 +256,16 @@ func TestAlreadyExistsResponseRequiresFreshVerification(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{
 		listResults: []fakeMappingListResult{
 			{},
-			{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", mappingTestProject)}},
+			{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", "org.", mappingTestOrg, mappingTestProject)}},
 		},
 		createErr: errAppProjectMappingAlreadyExists,
 	}
 	reconciler, agent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
@@ -249,15 +279,11 @@ func TestAlreadyExistsResponseRequiresFreshVerification(t *testing.T) {
 
 func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
-		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-wrong", "another-project")}},
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-wrong", "org.", mappingTestOrg, "another-project")}},
 	}}
-	reconciler, agent := newMappingTestReconciler(
-		t,
-		true,
-		mappingAPI,
-		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{ArgoProjectMappingId: "stale-id"},
-	)
+	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{ArgoProjectMappingId: "stale-id"}
+	reconciler, agent := newMappingTestReconciler(t, agent, true, mappingAPI, newReadyAgentChecker())
 
 	_, err := reconcileMappingForTest(t, reconciler, agent)
 	if !stderrors.Is(err, errAppProjectMappingMismatch) {
@@ -266,7 +292,7 @@ func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 	if mappingAPI.createCalls != 0 {
 		t.Fatalf("conflicting mapping was overwritten: %d create calls", mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonMappingMismatch)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonMappingMismatch)
 	current := getMappingTestAgent(t, reconciler.Client)
 	if current.Status.ArgoProjectMappingId != "" {
 		t.Fatalf("stale mapping ID was retained after mismatch: %q", current.Status.ArgoProjectMappingId)
@@ -276,18 +302,14 @@ func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 func TestExternallyDeletedMappingIsRecreated(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
 		{},
-		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-recreated", mappingTestProject)}},
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-recreated", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
-	reconciler, agent := newMappingTestReconciler(
-		t,
-		true,
-		mappingAPI,
-		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{
-			ArgoProjectId:        mappingTestAppProject,
-			ArgoProjectMappingId: "mapping-deleted",
-		},
-	)
+	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		ArgoProjectId:        mappingTestAppProject,
+		ArgoProjectMappingId: "mapping-deleted",
+	}
+	reconciler, agent := newMappingTestReconciler(t, agent, true, mappingAPI, newReadyAgentChecker())
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
 		t.Fatalf("reconcile mapping: %v", err)
@@ -300,18 +322,14 @@ func TestExternallyDeletedMappingIsRecreated(t *testing.T) {
 
 func TestExternallyRecreatedMappingUpdatesStaleID(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
-		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-new-id", mappingTestProject)}},
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-new-id", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
-	reconciler, agent := newMappingTestReconciler(
-		t,
-		true,
-		mappingAPI,
-		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{
-			ArgoProjectId:        mappingTestAppProject,
-			ArgoProjectMappingId: "mapping-old-id",
-		},
-	)
+	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		ArgoProjectId:        mappingTestAppProject,
+		ArgoProjectMappingId: "mapping-old-id",
+	}
+	reconciler, agent := newMappingTestReconciler(t, agent, true, mappingAPI, newReadyAgentChecker())
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
 		t.Fatalf("reconcile mapping: %v", err)
@@ -325,7 +343,13 @@ func TestExternallyRecreatedMappingUpdatesStaleID(t *testing.T) {
 func TestMappingWaitsForHarnessAgentExistence(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{}
 	readinessChecker := &fakeAgentReadinessChecker{readiness: harnessAgentReadiness{Exists: false}}
-	reconciler, agent := newMappingTestReconciler(t, true, mappingAPI, readinessChecker, infrastructurev1.HarnessGitopsAgentStatus{})
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		true,
+		mappingAPI,
+		readinessChecker,
+	)
 
 	result, err := reconcileMappingForTest(t, reconciler, agent)
 	if err != nil {
@@ -340,7 +364,7 @@ func TestMappingWaitsForHarnessAgentExistence(t *testing.T) {
 	if mappingAPI.listCalls != 0 || mappingAPI.createCalls != 0 {
 		t.Fatalf("mapping API called before the Harness agent existed: list=%d create=%d", mappingAPI.listCalls, mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonAgentNotFound)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonAgentNotFound)
 }
 
 func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
@@ -352,10 +376,10 @@ func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
 	}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		true,
 		mappingAPI,
 		readinessChecker,
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 
 	result, err := reconcileMappingForTest(t, reconciler, agent)
@@ -371,39 +395,38 @@ func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
 	if mappingAPI.listCalls != 0 || mappingAPI.createCalls != 0 {
 		t.Fatalf("mapping API called before the Harness agent was healthy: list=%d create=%d", mappingAPI.listCalls, mappingAPI.createCalls)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonAgentNotHealthy)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonAgentNotHealthy)
 }
 
 func TestCreateWithoutVerifiedListResultDoesNotBecomeReady(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{}, {}}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
+		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
-		infrastructurev1.HarnessGitopsAgentStatus{},
 	)
 
 	_, err := reconcileMappingForTest(t, reconciler, agent)
 	if !stderrors.Is(err, errAppProjectMappingNotVerified) {
 		t.Fatalf("expected unverified create to fail, got %v", err)
 	}
-	assertMappingCondition(t, reconciler.Client, mappingReasonVerificationFailed)
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonVerificationFailed)
 }
 
 func newMappingTestReconciler(
 	t *testing.T,
+	agent *infrastructurev1.HarnessGitopsAgent,
 	withAppProject bool,
 	mappingAPI *fakeAppProjectMappingAPI,
 	readinessChecker *fakeAgentReadinessChecker,
-	status infrastructurev1.HarnessGitopsAgentStatus,
+	extraObjects ...client.Object,
 ) (*HarnessGitopsAgentReconciler, *infrastructurev1.HarnessGitopsAgent) {
 	t.Helper()
 	scheme := newMappingTestScheme(t)
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
-	agent.Status = status
 
-	objects := []client.Object{agent}
+	objects := append([]client.Object{agent}, extraObjects...)
 	if withAppProject {
 		objects = append(objects, newAppProjectObject(mappingTestNamespace, mappingTestAppProject))
 	}
@@ -418,7 +441,7 @@ func newMappingTestReconciler(
 		mappingAPI:            mappingAPI,
 		agentReadinessChecker: readinessChecker,
 	}
-	return reconciler, getMappingTestAgent(t, k8sClient)
+	return reconciler, getAgentByName(t, k8sClient, agent.Name)
 }
 
 func newReadyAgentChecker() *fakeAgentReadinessChecker {
@@ -434,6 +457,9 @@ func newMappingTestScheme(t *testing.T) *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := infrastructurev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add HarnessGitopsAgent scheme: %v", err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add corev1 scheme: %v", err)
 	}
 	scheme.AddKnownTypeWithName(appProjectGVK, &unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(
@@ -468,12 +494,12 @@ func newMappingTestAgent(name string, namespace string, appProject string) *infr
 	}
 }
 
-func mappingTestRecord(identifier string, project string) nextgen.V1AppProjectMappingV2 {
+func mappingTestRecord(identifier string, agentPrefix string, orgID string, project string) nextgen.V1AppProjectMappingV2 {
 	return nextgen.V1AppProjectMappingV2{
 		Identifier:        identifier,
-		AgentIdentifier:   "org." + mappingTestAgentID,
+		AgentIdentifier:   agentPrefix + mappingTestAgentID,
 		AccountIdentifier: mappingTestAccount,
-		OrgIdentifier:     mappingTestOrg,
+		OrgIdentifier:     orgID,
 		ProjectIdentifier: project,
 		ArgoProjectName:   mappingTestAppProject,
 	}
@@ -485,42 +511,48 @@ func reconcileMappingForTest(
 	agent *infrastructurev1.HarnessGitopsAgent,
 ) (ctrl.Result, error) {
 	t.Helper()
+	// Derive the target the same way Reconcile does, so these tests exercise
+	// the real validation rather than a hand-built target that cannot fail.
+	target := mustProjectMappingTarget(t, agent)
 	return reconciler.reconcileAppProjectMapping(
 		context.Background(),
 		nil,
 		agent,
 		mappingTestAgentID,
-		mappingTestAppProject,
-		mappingTestProject,
+		target,
 	)
+}
+
+func mustProjectMappingTarget(t *testing.T, agent *infrastructurev1.HarnessGitopsAgent) *projectMappingTarget {
+	t.Helper()
+	target, err := projectMappingDetails(agent)
+	if err != nil {
+		t.Fatalf("projectMappingDetails: %v", err)
+	}
+	return target
 }
 
 func getMappingTestAgent(t *testing.T, k8sClient client.Client) *infrastructurev1.HarnessGitopsAgent {
 	t.Helper()
-	agent := &infrastructurev1.HarnessGitopsAgent{}
-	if err := k8sClient.Get(context.Background(), client.ObjectKey{
-		Namespace: mappingTestNamespace,
-		Name:      "mapping-resource",
-	}, agent); err != nil {
-		t.Fatalf("get mapping test agent: %v", err)
-	}
-	return agent
+	return getAgentByName(t, k8sClient, "mapping-resource")
 }
 
-// assertMappingCondition asserts a not-ready MappingReady condition. Ready
-// states are asserted by assertVerifiedMappingStatus instead.
+// assertMappingCondition asserts the MappingReady condition on the named agent.
+// Verified mapping IDs are asserted by assertVerifiedMappingStatus instead.
 func assertMappingCondition(
 	t *testing.T,
 	k8sClient client.Client,
-	reason string,
+	name string,
+	wantStatus metav1.ConditionStatus,
+	wantReason string,
 ) {
 	t.Helper()
-	agent := getMappingTestAgent(t, k8sClient)
+	agent := getAgentByName(t, k8sClient, name)
 	condition := apiMeta.FindStatusCondition(agent.Status.Conditions, mappingReadyConditionType)
 	if condition == nil {
 		t.Fatal("MappingReady condition is absent")
 	}
-	if condition.Status != metav1.ConditionFalse || condition.Reason != reason {
+	if condition.Status != wantStatus || condition.Reason != wantReason {
 		t.Fatalf("unexpected MappingReady condition: %#v", condition)
 	}
 }
