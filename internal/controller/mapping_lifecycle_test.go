@@ -105,7 +105,7 @@ func TestMappingWaitsForAppProject(t *testing.T) {
 	readinessChecker := newReadyAgentChecker()
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		false,
 		mappingAPI,
 		readinessChecker,
@@ -130,7 +130,7 @@ func TestMappingWaitsForAppProject(t *testing.T) {
 func TestMissingAppProjectRetainsVerifiedMappingIdentity(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{}
 	readinessChecker := newReadyAgentChecker()
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
 		ArgoProjectId:        mappingTestAppProject,
 		ArgoProjectMappingId: "verified-mapping",
@@ -155,7 +155,7 @@ func TestMappingUsesConfiguredIntervals(t *testing.T) {
 	retryInterval := 7 * time.Second
 	retryReconciler, retryAgent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		false,
 		&fakeAppProjectMappingAPI{},
 		newReadyAgentChecker(),
@@ -172,7 +172,7 @@ func TestMappingUsesConfiguredIntervals(t *testing.T) {
 	resyncInterval := 7 * time.Minute
 	resyncReconciler, resyncAgent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		&fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{
 			mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-existing", "org.", mappingTestOrg, mappingTestProject)},
@@ -212,7 +212,7 @@ func TestMappingIsCreatedAndVerifiedAfterAppProjectAppears(t *testing.T) {
 	readinessChecker := newReadyAgentChecker()
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		readinessChecker,
@@ -237,7 +237,7 @@ func TestExistingMatchingMappingIsRetrievedAndStored(t *testing.T) {
 	}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
@@ -262,7 +262,7 @@ func TestAlreadyExistsResponseRequiresFreshVerification(t *testing.T) {
 	}
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
@@ -281,7 +281,7 @@ func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
 		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-wrong", "org.", mappingTestOrg, "another-project")}},
 	}}
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{ArgoProjectMappingId: "stale-id"}
 	reconciler, agent := newMappingTestReconciler(t, agent, true, mappingAPI, newReadyAgentChecker())
 
@@ -304,7 +304,7 @@ func TestExternallyDeletedMappingIsRecreated(t *testing.T) {
 		{},
 		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-recreated", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
 		ArgoProjectId:        mappingTestAppProject,
 		ArgoProjectMappingId: "mapping-deleted",
@@ -324,7 +324,7 @@ func TestExternallyRecreatedMappingUpdatesStaleID(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
 		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-new-id", "org.", mappingTestOrg, mappingTestProject)}},
 	}}
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
 		ArgoProjectId:        mappingTestAppProject,
 		ArgoProjectMappingId: "mapping-old-id",
@@ -345,7 +345,7 @@ func TestMappingWaitsForHarnessAgentExistence(t *testing.T) {
 	readinessChecker := &fakeAgentReadinessChecker{readiness: harnessAgentReadiness{Exists: false}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		readinessChecker,
@@ -376,7 +376,7 @@ func TestMappingWaitsForHarnessAgentHealth(t *testing.T) {
 	}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		readinessChecker,
@@ -402,7 +402,7 @@ func TestCreateWithoutVerifiedListResultDoesNotBecomeReady(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{}, {}}}
 	reconciler, agent := newMappingTestReconciler(
 		t,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		true,
 		mappingAPI,
 		newReadyAgentChecker(),
@@ -469,11 +469,11 @@ func newMappingTestScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-func newMappingTestAgent(name string, namespace string, appProject string) *infrastructurev1.HarnessGitopsAgent {
+func newMappingTestAgent(name string) *infrastructurev1.HarnessGitopsAgent {
 	return &infrastructurev1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
-			Namespace:  namespace,
+			Namespace:  mappingTestNamespace,
 			Generation: 1,
 		},
 		Spec: infrastructurev1.HarnessGitopsAgentSpec{
@@ -488,7 +488,7 @@ func newMappingTestAgent(name string, namespace string, appProject string) *infr
 			TokenSecretRef:  "agent-token",
 			ProjectMapping: &infrastructurev1.ProjectMappingSpec{
 				ProjectId:  mappingTestProject,
-				AppProject: appProject,
+				AppProject: mappingTestAppProject,
 			},
 		},
 	}

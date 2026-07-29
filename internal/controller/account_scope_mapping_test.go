@@ -26,7 +26,7 @@ const accountScopeMappingOrg = "harness_controllers"
 // spec.orgId and spec.projectId are deliberately absent: that is the contract
 // for ACCOUNT scope, not an omission.
 func newAccountScopeAgent(mappingOrgID string) *infrastructurev1.HarnessGitopsAgent {
-	agent := newMappingTestAgent("account-mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("account-mapping-resource")
 	agent.Spec.Scope = "ACCOUNT"
 	agent.Spec.OrgId = ""
 	agent.Spec.ProjectId = ""
@@ -44,16 +44,15 @@ func accountScopeMappingRecords(identifier string, orgID string) []nextgen.V1App
 }
 
 // newAccountScopeReconciler delegates to the shared builder with the fixtures
-// every account-scope test wants: a ready agent and the user-created API key
-// Secret.
+// every account-scope test wants: an existing AppProject, a ready agent, and
+// the user-created API key Secret.
 func newAccountScopeReconciler(
 	t *testing.T,
 	agent *infrastructurev1.HarnessGitopsAgent,
 	mappingAPI *fakeAppProjectMappingAPI,
-	withAppProject bool,
 ) (*HarnessGitopsAgentReconciler, *infrastructurev1.HarnessGitopsAgent) {
 	t.Helper()
-	return newMappingTestReconciler(t, agent, withAppProject, mappingAPI, newReadyAgentChecker(),
+	return newMappingTestReconciler(t, agent, true, mappingAPI, newReadyAgentChecker(),
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: mappingTestNamespace},
 			Data:       map[string][]byte{"api_key": []byte("not-a-real-key")},
@@ -80,7 +79,7 @@ func TestAccountScopeMappingUsesMappingOrg(t *testing.T) {
 		{mappings: accountScopeMappingRecords("mapping-1", accountScopeMappingOrg)},
 	}}
 	reconciler, agent := newAccountScopeReconciler(
-		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI, true)
+		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
 		t.Fatalf("expected the existing mapping to be adopted, got %v", err)
@@ -120,7 +119,7 @@ func TestAccountScopeMappingCreateCarriesMappingOrg(t *testing.T) {
 		{mappings: accountScopeMappingRecords("mapping-1", accountScopeMappingOrg)},
 	}}
 	reconciler, agent := newAccountScopeReconciler(
-		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI, true)
+		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
 		t.Fatalf("expected create then verify to succeed, got %v", err)
@@ -160,7 +159,7 @@ func TestAccountScopeWithoutMappingOrgIsRejected(t *testing.T) {
 // the CR status, and no Harness call may be made.
 func TestAccountScopeInvalidMappingReportsAndSendsNothing(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{}
-	reconciler, agent := newAccountScopeReconciler(t, newAccountScopeAgent(""), mappingAPI, true)
+	reconciler, agent := newAccountScopeReconciler(t, newAccountScopeAgent(""), mappingAPI)
 
 	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(agent),
@@ -168,7 +167,7 @@ func TestAccountScopeInvalidMappingReportsAndSendsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an invalid spec must not be retried as an error, got %v", err)
 	}
-	if result.Requeue || result.RequeueAfter != 0 {
+	if !result.IsZero() {
 		t.Fatalf("an invalid spec must not requeue, got %+v", result)
 	}
 	if mappingAPI.listCalls != 0 || mappingAPI.createCalls != 0 {
@@ -186,7 +185,7 @@ func TestAccountScopeInvalidMappingReportsAndSendsNothing(t *testing.T) {
 	result, err = reconciler.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(agent),
 	})
-	if err != nil || result.Requeue || result.RequeueAfter != 0 {
+	if err != nil || !result.IsZero() {
 		t.Fatalf("second reconcile of an invalid spec must be a quiet no-op, got result=%+v err=%v", result, err)
 	}
 	after := getAgentByName(t, reconciler.Client, agent.Name).Status
@@ -202,7 +201,7 @@ func TestAccountScopeMappingWithDifferentOrgIsMismatch(t *testing.T) {
 		{mappings: accountScopeMappingRecords("mapping-1", "some_other_org")},
 	}}
 	reconciler, agent := newAccountScopeReconciler(
-		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI, true)
+		t, newAccountScopeAgent(accountScopeMappingOrg), mappingAPI)
 
 	if _, err := reconcileMappingForTest(t, reconciler, agent); err == nil {
 		t.Fatal("expected a mismatch error for a mapping owned by another org")
@@ -217,7 +216,7 @@ func TestAccountScopeMappingWithDifferentOrgIsMismatch(t *testing.T) {
 // an ORG-scoped CR the actionable fix is spec.orgId -- the ACCOUNT-scope advice
 // (spec.projectMapping.orgId) would send the operator to the wrong field.
 func TestOrgScopeWithoutAnyOrgPointsAtSpecOrgId(t *testing.T) {
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	agent.Spec.OrgId = ""
 
 	_, err := projectMappingDetails(agent)
@@ -232,7 +231,7 @@ func TestOrgScopeWithoutAnyOrgPointsAtSpecOrgId(t *testing.T) {
 // TestOrgScopeStillFallsBackToAgentOrg is the regression guard: ORG- and
 // PROJECT-scoped CRs that never set projectMapping.orgId must be unchanged.
 func TestOrgScopeStillFallsBackToAgentOrg(t *testing.T) {
-	agent := newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject)
+	agent := newMappingTestAgent("mapping-resource")
 	if agent.Spec.ProjectMapping.OrgId != "" {
 		t.Fatal("fixture should not set projectMapping.orgId")
 	}
@@ -262,7 +261,7 @@ func TestDeleteUsesLiveMappingIdNotStatus(t *testing.T) {
 	}}
 	agent := newAccountScopeAgent(accountScopeMappingOrg)
 	agent.Status.ArgoProjectMappingId = "stale-id"
-	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI, true)
+	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
 
 	target := mustProjectMappingTarget(t, fetched)
 	if err := reconciler.deleteAppProjectMapping(
@@ -289,7 +288,7 @@ func TestDeleteRefusesMappingOwnedByAnotherOrg(t *testing.T) {
 		{mappings: accountScopeMappingRecords("mapping-1", "some_other_org")},
 	}}
 	agent := newAccountScopeAgent(accountScopeMappingOrg)
-	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI, true)
+	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
 
 	target := mustProjectMappingTarget(t, fetched)
 	if err := reconciler.deleteAppProjectMapping(
@@ -311,9 +310,9 @@ func TestInvalidMappingDoesNotStrandFinalizer(t *testing.T) {
 	// to clean up the mapping -- no unfaked agent-delete call is made.
 	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
 	agent.Finalizers = []string{harnessAgentFinalizer}
-	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI, true)
+	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
 
-	if err := reconciler.Client.Delete(context.Background(), fetched); err != nil {
+	if err := reconciler.Delete(context.Background(), fetched); err != nil {
 		t.Fatalf("delete CR: %v", err)
 	}
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{
@@ -323,7 +322,7 @@ func TestInvalidMappingDoesNotStrandFinalizer(t *testing.T) {
 	}
 
 	remaining := &infrastructurev1.HarnessGitopsAgent{}
-	err := reconciler.Client.Get(context.Background(),
+	err := reconciler.Get(context.Background(),
 		client.ObjectKeyFromObject(fetched), remaining)
 	if err == nil && len(remaining.Finalizers) > 0 {
 		t.Fatalf("finalizer was stranded on an invalid CR: %v", remaining.Finalizers)

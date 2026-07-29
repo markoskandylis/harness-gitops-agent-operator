@@ -96,7 +96,7 @@ func TestSDKAgentReadinessUsesConnectedHealthyPayload(t *testing.T) {
 	readiness, err := (sdkAgentReadinessChecker{}).Readiness(
 		context.Background(),
 		session,
-		newMappingTestAgent("mapping-resource", mappingTestNamespace, mappingTestAppProject),
+		newMappingTestAgent("mapping-resource"),
 		mappingTestAgentID,
 	)
 	if err != nil {
