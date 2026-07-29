@@ -1,0 +1,51 @@
+# ACCOUNT-scope agent with a project mapping.
+#
+# This is the shape that B12 existed to make possible. An ACCOUNT-scoped agent
+# is registered at account level and therefore has NO org of its own:
+# gitopsAgent.harness.identity.orgIdentifier is left empty and the rendered CR
+# carries no spec.orgId. The org that owns the MAPPED project is a property of
+# the mapping, not of the agent, so it has to be supplied here.
+#
+# Omit projectMapping.orgId and the render hard-fails on purpose. Without that
+# guard the failure is silent in the worst way: the AppProject is still created
+# on the cluster, so it looks like it worked while nothing is mapped in Harness.
+#
+#   helm dependency build .
+#   helm upgrade --install account-agent . \
+#     --namespace account-agent-ns --create-namespace \
+#     --values values-account-scope-example.yaml
+
+harnessAgent:
+  metadata:
+    name: account-agent
+  spec:
+    name: account-agent
+    scope: ACCOUNT
+    apiKeySecretRef: harness-api-key-secret
+    tokenSecretRef: account-agent-token
+    projectMapping:
+      # No fallback exists at ACCOUNT scope -- this is required.
+      orgId: your-org-id
+      projectId: your-project-id
+      AppProject: default
+
+gitopsAgent:
+  argo-cd:
+    crds:
+      install: true
+  harness:
+    identity:
+      accountIdentifier: your-account-id
+      # Both empty at ACCOUNT scope. This is the point of the scope, not an
+      # omission: the agent serves projects across many orgs.
+      orgIdentifier: ""
+      projectIdentifier: ""
+      agentIdentifier: account_agent
+  agent:
+    harnessName: account-agent
+    existingSecrets:
+      # Must equal harnessAgent.spec.tokenSecretRef.
+      agentToken: account-agent-token
+
+appProject:
+  enabled: true

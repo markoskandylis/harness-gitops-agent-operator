@@ -34,7 +34,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	// 2. HARNESS SDK IMPORTS
-	"github.com/antihax/optional" // REQUIRED for Delete Options
+	"github.com/antihax/optional"
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
 	// 3. YOUR API DEFINITION
@@ -87,41 +87,99 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	existingAgentIdentifier := strings.TrimSpace(agentCR.Spec.ExistingAgentIdentifier)
 	existingAgentMode := existingAgentIdentifier != ""
-	mappingProjectID, mappingAppProject, err := projectMappingDetails(agentCR)
-	if err != nil {
-		return ctrl.Result{}, err
+
+	// Deletion is handled before validation on purpose. A CR whose spec cannot
+	// pass validation must still be able to drop its finalizer, otherwise an
+	// invalid mapping strands the resource forever. The target is best effort
+	// here: nil simply means there is no mapping to clean up.
+	if agentCR.GetDeletionTimestamp() != nil {
+		target, err := projectMappingDetails(agentCR)
+		if err != nil {
+			// Deliberately not fatal, but never silent: in existing-agent mode a
+			// nil target skips mapping cleanup, which can orphan a live mapping.
+			logf.FromContext(ctx).Error(err,
+				"Proceeding with deletion despite an invalid spec.projectMapping; skipping mapping cleanup")
+		}
+		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode, target)
 	}
 
-	if agentCR.GetDeletionTimestamp() != nil {
-		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode, mappingProjectID)
+	target, err := projectMappingDetails(agentCR)
+	if err != nil {
+		// Terminal: only a spec edit can fix this, and an edit produces a fresh
+		// reconcile. Returning the error instead would spin on backoff forever
+		// and report the failure only in the logs.
+		if condErr := r.setMappingCondition(ctx, agentCR, mappingReasonInvalidProjectMapping, err.Error()); condErr != nil {
+			return ctrl.Result{}, condErr
+		}
+		logf.FromContext(ctx).Error(err, "Invalid spec.projectMapping; not contacting Harness")
+		return ctrl.Result{}, nil
 	}
 
 	if result, done, err := r.ensureFinalizer(ctx, agentCR); done {
 		return result, err
 	}
 
-	return r.reconcileReady(ctx, req, agentCR, existingAgentIdentifier, existingAgentMode, mappingProjectID, mappingAppProject)
+	return r.reconcileReady(ctx, req, agentCR, existingAgentIdentifier, existingAgentMode, target)
 }
 
-func projectMappingDetails(agentCR *infrastructurev1.HarnessGitopsAgent) (string, string, error) {
+// projectMappingTarget is the validated projectMapping input. OrgID is the org
+// that owns ProjectID -- a property of the mapping, not of the agent, because an
+// ACCOUNT-scoped agent has no org of its own.
+type projectMappingTarget struct {
+	OrgID      string
+	ProjectID  string
+	AppProject string
+}
+
+func projectMappingDetails(agentCR *infrastructurev1.HarnessGitopsAgent) (*projectMappingTarget, error) {
 	mappingSpec := agentCR.Spec.ProjectMapping
 	if mappingSpec == nil {
-		return "", "", nil
+		return nil, nil
 	}
 
 	scope := strings.TrimSpace(agentCR.Spec.Scope)
 	if !strings.EqualFold(scope, "ORG") &&
 		!strings.EqualFold(scope, "ACCOUNT") &&
 		!strings.EqualFold(scope, "PROJECT") {
-		return "", "", fmt.Errorf("spec.projectMapping is only supported for ACCOUNT, ORG, or PROJECT scope")
+		return nil, fmt.Errorf("spec.projectMapping is only supported for ACCOUNT, ORG, or PROJECT scope")
 	}
 
-	mappingProjectID := strings.TrimSpace(mappingSpec.ProjectId)
-	mappingAppProject := strings.TrimSpace(mappingSpec.AppProject)
-	if mappingProjectID == "" || mappingAppProject == "" {
-		return "", "", fmt.Errorf("spec.projectMapping.projectId and spec.projectMapping.AppProject are both required when projectMapping is set")
+	// The mapping org prefers the per-mapping projectMapping.orgId and falls
+	// back to the agent's own org, so ORG- and PROJECT-scoped CRs that never
+	// set projectMapping.orgId behave exactly as before.
+	orgID := strings.TrimSpace(mappingSpec.OrgId)
+	if orgID == "" {
+		orgID = strings.TrimSpace(agentCR.Spec.OrgId)
 	}
-	return mappingProjectID, mappingAppProject, nil
+
+	target := &projectMappingTarget{
+		OrgID:      orgID,
+		ProjectID:  strings.TrimSpace(mappingSpec.ProjectId),
+		AppProject: strings.TrimSpace(mappingSpec.AppProject),
+	}
+	if target.ProjectID == "" || target.AppProject == "" {
+		return nil, fmt.Errorf("spec.projectMapping.projectId and spec.projectMapping.AppProject are both required when projectMapping is set")
+	}
+	// An unresolvable project reference is worse than no mapping at all: the
+	// AppProject is still created on the cluster, so it looks like it worked.
+	// Fail here rather than sending {orgIdentifier: "", projectIdentifier: X},
+	// which Harness silently maps to nothing.
+	if target.OrgID == "" {
+		if strings.EqualFold(scope, "ACCOUNT") {
+			return nil, fmt.Errorf(
+				"spec.projectMapping.orgId is required: an ACCOUNT-scoped agent has no org of its own, "+
+					"so the org that owns spec.projectMapping.projectId %q cannot be inferred",
+				target.ProjectID,
+			)
+		}
+		return nil, fmt.Errorf(
+			"spec.orgId is required: a %s-scoped agent supplies the org that owns "+
+				"spec.projectMapping.projectId %q from its own org, and spec.projectMapping.orgId is not set either",
+			strings.ToUpper(scope),
+			target.ProjectID,
+		)
+	}
+	return target, nil
 }
 
 func (r *HarnessGitopsAgentReconciler) ensureFinalizer(
@@ -144,7 +202,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileDeletion(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	existingAgentIdentifier string,
 	existingAgentMode bool,
-	mappingProjectID string,
+	target *projectMappingTarget,
 ) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
 		return ctrl.Result{}, nil
@@ -153,19 +211,18 @@ func (r *HarnessGitopsAgentReconciler) reconcileDeletion(
 	log := logf.FromContext(ctx)
 	if existingAgentMode {
 		// Do not delete shared agents. Best effort cleanup for mapping created by this CR.
-		if agentCR.Status.ArgoProjectMappingId != "" {
-			log.Info("Deleting AppProject mapping", "mappingId", agentCR.Status.ArgoProjectMappingId)
+		if target != nil {
 			harnessSession, err := r.getHarnessClient(ctx, agentCR)
 			if err != nil {
 				log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
 				return ctrl.Result{}, err
 			}
 			if err := r.deleteAppProjectMapping(
+				ctx,
 				harnessSession,
 				agentCR,
 				existingAgentIdentifier,
-				agentCR.Status.ArgoProjectMappingId,
-				mappingProjectID,
+				target,
 			); err != nil {
 				log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
 				return ctrl.Result{}, err
@@ -222,11 +279,10 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	existingAgentIdentifier string,
 	existingAgentMode bool,
-	mappingProjectID string,
-	mappingAppProject string,
+	target *projectMappingTarget,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	needsMapping := agentCR.Spec.ProjectMapping != nil
+	needsMapping := target != nil
 
 	agentDone := agentCR.Status.AgentIdentifier != ""
 	tokenSecretName := agentCR.Spec.TokenSecretRef
@@ -251,7 +307,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	var agentCredentials *nextgen.V1AgentCredentials
 
 	if existingAgentMode {
-		agentIdentifier = scopedAgentIdentifier(existingAgentIdentifier)
+		agentIdentifier = existingAgentIdentifier
 		if agentCR.Status.AgentIdentifier == "" {
 			agentCR.Status.AgentIdentifier = agentIdentifier
 			if err := r.Status().Update(ctx, agentCR); err != nil {
@@ -311,8 +367,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 			harnessSession,
 			agentCR,
 			agentIdentifier,
-			mappingAppProject,
-			mappingProjectID,
+			target,
 		)
 	}
 
@@ -384,16 +439,6 @@ func scopedPathAgentIdentifierCandidates(scope string, identifier string) []stri
 	return candidates
 }
 
-// scopedAgentIdentifier keeps the exact identifier shape provided by users/SDK.
-// Do not force org/account prefixes here; Harness may return non-dot-scoped IDs.
-func scopedAgentIdentifier(identifier string) string {
-	id := strings.TrimSpace(identifier)
-	if id == "" {
-		return ""
-	}
-	return id
-}
-
 func wrapHarnessAPIError(message string, err error) error {
 	if err == nil {
 		return nil
@@ -457,6 +502,10 @@ func (r *HarnessGitopsAgentReconciler) getHarnessClient(ctx context.Context, age
 	// ten internal retries can otherwise block the sole reconcile worker for
 	// minutes during a Harness 5xx response.
 	cfg.HTTPClient.RetryMax = 0
+	// A response that never sends headers would otherwise hang the sole
+	// reconcile worker forever: the underlying client sets dial and TLS
+	// timeouts but no overall request deadline.
+	cfg.HTTPClient.HTTPClient.Timeout = DefaultHarnessHTTPTimeout
 	apiClient := nextgen.NewAPIClient(cfg)
 
 	authCtx := context.WithValue(ctx, nextgen.ContextAPIKey, nextgen.APIKey{

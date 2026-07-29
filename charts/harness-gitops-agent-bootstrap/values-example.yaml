@@ -28,6 +28,10 @@ harnessAgent:
     tokenSecretRef: example-agent-token
     # Optional: map an Argo CD AppProject to a Harness project.
     projectMapping:
+      # Org that owns projectId. REQUIRED at ACCOUNT scope (the agent has no org
+      # of its own); optional at ORG/PROJECT scope, where it falls back to
+      # gitopsAgent.harness.identity.orgIdentifier.
+      orgId: ""
       projectId: your-project-id
       AppProject: default
 

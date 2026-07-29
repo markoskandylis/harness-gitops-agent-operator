@@ -5,28 +5,6 @@ import (
 	"testing"
 )
 
-func TestScopedAgentIdentifier(t *testing.T) {
-	testCases := []struct {
-		name       string
-		identifier string
-		want       string
-	}{
-		{name: "empty", identifier: "", want: ""},
-		{name: "whitespace", identifier: "  ", want: ""},
-		{name: "trims", identifier: "  my-agent  ", want: "my-agent"},
-		{name: "raw", identifier: "my-agent", want: "my-agent"},
-		{name: "prefixed", identifier: "org.my-agent", want: "org.my-agent"},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := scopedAgentIdentifier(testCase.identifier); got != testCase.want {
-				t.Fatalf("scopedAgentIdentifier(%q) = %q, want %q", testCase.identifier, got, testCase.want)
-			}
-		})
-	}
-}
-
 func TestScopedPathAgentIdentifierCandidates(t *testing.T) {
 	testCases := []struct {
 		name       string

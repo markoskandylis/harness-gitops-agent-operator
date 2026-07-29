@@ -22,6 +22,15 @@ import (
 
 // ProjectMappingSpec defines explicit Harness <-> ArgoCD AppProject mapping input.
 type ProjectMappingSpec struct {
+	// OrgId is the Harness organization that owns ProjectId. It is a property of
+	// the mapping, not of the agent: an ACCOUNT-scoped agent exists to serve
+	// projects in many orgs and therefore has no org of its own (Spec.OrgId is
+	// empty by design), so the org has to be supplied per mapping.
+	// When empty the controller falls back to Spec.OrgId, which keeps ORG- and
+	// PROJECT-scoped agents working without setting this field.
+	// +optional
+	OrgId string `json:"orgId,omitempty"`
+
 	// ProjectId is the Harness project identifier to map to.
 	// +optional
 	ProjectId string `json:"projectId,omitempty"`
