@@ -6,20 +6,20 @@ import (
 	"testing"
 )
 
-func TestAppProjectRunsAfterBundledArgoCRDs(t *testing.T) {
+func TestAppProjectIsManagedAsNormalHelmResource(t *testing.T) {
 	manifest, err := os.ReadFile("templates/appproject.yaml")
 	if err != nil {
 		t.Fatalf("read AppProject template: %v", err)
 	}
 	content := string(manifest)
 
-	for _, required := range []string{
-		"helm.sh/hook: post-install,post-upgrade",
-		"helm.sh/hook-weight: \"0\"",
-		"helm.sh/hook-delete-policy: before-hook-creation",
+	for _, forbidden := range []string{
+		"helm.sh/hook:",
+		"helm.sh/hook-weight:",
+		"helm.sh/hook-delete-policy:",
 	} {
-		if !strings.Contains(content, required) {
-			t.Fatalf("AppProject template is missing lifecycle ordering %q", required)
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("AppProject must not be rendered as an untracked Helm hook: %q", forbidden)
 		}
 	}
 	if !strings.Contains(content, "kind: AppProject") {

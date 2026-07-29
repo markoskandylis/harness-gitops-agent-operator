@@ -9,7 +9,9 @@ The controller reconciles `HarnessGitopsAgent` resources and performs:
 1. Agent registration in Harness using Harness Go SDK.
 2. Status update with the resolved Harness agent identifier.
 3. Token secret creation/update in Kubernetes.
-4. Agent deletion in Harness during CR deletion (finalizer-driven).
+4. Controller-created agent deletion in Harness during CR deletion
+   (finalizer-driven). Agents referenced with `existingAgentIdentifier` are
+   never deleted.
 
 ## Features
 
@@ -19,6 +21,11 @@ The controller reconciles `HarnessGitopsAgent` resources and performs:
 4. Safe delete behavior:
    If Harness credentials are missing, finalizer is retained so resources are not orphaned.
 5. "Agent not found" during delete is treated as already deleted.
+6. Harness agent identity is immutable after CR creation. Replace the CR to
+   change account, scope, identifier, or adoption mode.
+7. Existing Harness agents must be adopted explicitly with
+   `spec.existingAgentIdentifier`; identifier conflicts are never adopted
+   automatically.
 
 ## API
 
@@ -77,9 +84,9 @@ Purpose:
 1. Creates `HarnessGitopsAgent` CR (controller registers agent in Harness and writes token secret).
 2. Installs Harness `gitops-helm` runtime in the same namespace.
 
-The install is two-phase: `gitopsAgent.enabled` defaults to `false`, so the first
-install creates only the CR. Enable the runtime after the controller has written
-the token secret.
+Install the controller first. The bootstrap then starts with
+`gitopsAgent.enabled=false`, so its first phase creates only the CR. Enable the
+runtime after the controller has written the token secret.
 
 Install example (phase one - CR only):
 
@@ -99,14 +106,26 @@ helm upgrade --install hub-bootstrap charts/harness-gitops-agent-bootstrap \
   --set gitopsAgent.agent.existingSecrets.agentToken="my-agent-token"
 ```
 
-Phase two - install the GitOps runtime once the token secret exists
+Phase two - install the GitOps runtime and Argo CRDs once the token secret exists
 (`kubectl get secret my-agent-token -n argocd-agent`):
 
 ```sh
 helm upgrade hub-bootstrap charts/harness-gitops-agent-bootstrap \
   -n argocd-agent \
   --reuse-values \
-  --set gitopsAgent.enabled=true --wait
+  --set gitopsAgent.enabled=true \
+  --set appProject.enabled=false \
+  --wait
+```
+
+When an AppProject is configured, enable it after its CRD exists:
+
+```sh
+helm upgrade hub-bootstrap charts/harness-gitops-agent-bootstrap \
+  -n argocd-agent \
+  --reuse-values \
+  --set appProject.enabled=true \
+  --wait
 ```
 
 Notes:
@@ -115,7 +134,8 @@ Notes:
 2. Secret `harness-api-key-secret` with key `api_key` must exist in `argocd-agent`.
 3. Keep `harnessAgent.spec.tokenSecretRef` and `gitopsAgent.agent.existingSecrets.agentToken` identical.
 4. The gitops-helm dependency archive is gitignored; run `helm dependency build` after a clean checkout.
-5. See `charts/harness-gitops-agent-bootstrap/README.md` and `values-example.yaml` for the full contract.
+5. If the Argo CRDs already exist, runtime and AppProject enablement can be combined.
+6. See `charts/harness-gitops-agent-bootstrap/README.md` and `values-example.yaml` for the full contract.
 
 ## Quickstart (Local k3d)
 
@@ -191,7 +211,17 @@ Expected:
 kubectl delete -f test/manifests/project-agent.yaml
 ```
 
-The controller removes the agent from Harness and then removes the finalizer.
+For an agent created by this CR, the controller removes the agent from Harness
+and then removes the finalizer. An agent referenced by
+`spec.existingAgentIdentifier` is external: deleting the CR leaves that agent
+running. Mappings found before this controller created them are also treated as
+external and left intact.
+
+If Harness accepted a create request but Kubernetes status could not be written,
+the controller fails closed instead of guessing ownership. Remove the incomplete
+remote agent or mapping in Harness, then retry/recreate the CR. This recovery is
+manual because deleting an unproven external resource automatically would be
+unsafe.
 
 ## Troubleshooting
 

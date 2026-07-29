@@ -37,6 +37,8 @@ const (
 	mappingReasonMappingMismatch       = "MappingMismatch"
 	mappingReasonVerificationFailed    = "MappingVerificationFailed"
 	mappingReasonInvalidProjectMapping = "InvalidProjectMapping"
+	mappingReasonMappingRemoved        = "MappingRemoved"
+	mappingReasonCleanupBlocked        = "MappingCleanupBlocked"
 
 	// DefaultAppProjectPendingRetryInterval bounds initial mapping latency while
 	// the AppProject is waiting to be installed by the bootstrap chart.
@@ -174,6 +176,24 @@ func (r *HarnessGitopsAgentReconciler) deleteAppProjectMapping(
 	}
 
 	log := logf.FromContext(ctx)
+	if agentCR.Status.ArgoProjectMappingOwnership != infrastructurev1.OwnershipManaged {
+		log.Info(
+			"Skipping AppProject mapping delete because controller ownership is not recorded",
+			"appProject", target.AppProject,
+			"mappingId", agentCR.Status.ArgoProjectMappingId,
+			"mappingOwnership", agentCR.Status.ArgoProjectMappingOwnership,
+		)
+		return nil
+	}
+	rememberedID := strings.TrimSpace(agentCR.Status.ArgoProjectMappingId)
+	if rememberedID == "" {
+		log.Info(
+			"Skipping AppProject mapping delete because its managed identifier is not recorded",
+			"appProject", target.AppProject,
+		)
+		return nil
+	}
+
 	request := appProjectMappingRequestFor(agentCR, agentIdentifier, target)
 
 	mappings, err := r.appProjectMappingAPI().List(ctx, session, request)
@@ -199,10 +219,10 @@ func (r *HarnessGitopsAgentReconciler) deleteAppProjectMapping(
 		}
 	}
 
-	if remembered := strings.TrimSpace(agentCR.Status.ArgoProjectMappingId); remembered != "" &&
-		remembered != strings.TrimSpace(mapping.Identifier) {
-		log.Info("AppProject mapping was recreated outside the controller; deleting the live one",
-			"rememberedId", remembered, "liveId", mapping.Identifier)
+	if rememberedID != strings.TrimSpace(mapping.Identifier) {
+		log.Info("Refusing to delete an AppProject mapping recreated outside the controller",
+			"rememberedId", rememberedID, "liveId", mapping.Identifier)
+		return nil
 	}
 
 	log.Info("Deleting AppProject mapping", "mappingId", mapping.Identifier)
@@ -231,6 +251,92 @@ func appProjectMappingRequestFor(
 		},
 		ArgoProjectName: target.AppProject,
 	}
+}
+
+func managedMappingCleanupTarget(
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	desired *projectMappingTarget,
+) (*projectMappingTarget, error) {
+	if agentCR.Status.ArgoProjectMappingOwnership != infrastructurev1.OwnershipManaged ||
+		strings.TrimSpace(agentCR.Status.ArgoProjectMappingId) == "" {
+		return nil, nil
+	}
+
+	observed := &projectMappingTarget{
+		OrgID:      strings.TrimSpace(agentCR.Status.ArgoProjectMappingOrgId),
+		ProjectID:  strings.TrimSpace(agentCR.Status.ArgoProjectMappingProjectId),
+		AppProject: strings.TrimSpace(agentCR.Status.ArgoProjectId),
+	}
+
+	if observed.OrgID == "" || observed.ProjectID == "" || observed.AppProject == "" {
+		return nil, fmt.Errorf(
+			"cannot clean up managed mapping %q because its resolved org/project/AppProject status is incomplete",
+			agentCR.Status.ArgoProjectMappingId,
+		)
+	}
+	if desired != nil &&
+		observed.OrgID == desired.OrgID &&
+		observed.ProjectID == desired.ProjectID &&
+		observed.AppProject == desired.AppProject {
+		return nil, nil
+	}
+	return observed, nil
+}
+
+func (r *HarnessGitopsAgentReconciler) reconcileStaleMapping(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	existingAgentIdentifier string,
+	existingAgentMode bool,
+	desired *projectMappingTarget,
+) (ctrl.Result, bool, error) {
+	staleTarget, err := managedMappingCleanupTarget(agentCR, desired)
+	if err != nil {
+		conditionErr := r.setMappingCondition(
+			ctx,
+			agentCR,
+			mappingReasonCleanupBlocked,
+			err.Error(),
+		)
+		return ctrl.Result{}, true, stderrors.Join(err, conditionErr)
+	}
+	if staleTarget == nil {
+		if desired == nil && mappingStateRecorded(agentCR) {
+			return ctrl.Result{}, true, r.setMappingRemovedStatus(ctx, agentCR)
+		}
+		return ctrl.Result{}, false, nil
+	}
+
+	harnessSession, err := r.getHarnessClient(ctx, agentCR)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+	agentIdentifier := agentIdentifierForStatus(agentCR)
+	if existingAgentMode {
+		agentIdentifier = existingAgentIdentifier
+	}
+	if err := r.deleteAppProjectMapping(
+		ctx,
+		harnessSession,
+		agentCR,
+		agentIdentifier,
+		staleTarget,
+	); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	if err := r.setMappingRemovedStatus(ctx, agentCR); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	return ctrl.Result{RequeueAfter: MinimumMappingInterval}, true, nil
+}
+
+func mappingStateRecorded(agentCR *infrastructurev1.HarnessGitopsAgent) bool {
+	return agentCR.Status.ArgoProjectId != "" ||
+		agentCR.Status.ArgoProjectMappingId != "" ||
+		agentCR.Status.ArgoProjectMappingOwnership != "" ||
+		agentCR.Status.ArgoProjectMappingOrgId != "" ||
+		agentCR.Status.ArgoProjectMappingProjectId != "" ||
+		apiMeta.FindStatusCondition(agentCR.Status.Conditions, mappingReadyConditionType) != nil
 }
 
 func (sdkAppProjectMappingAPI) List(
@@ -498,17 +604,14 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 	mapping, created, err := r.ensureAppProjectMapping(ctx, session, request)
 	if err != nil {
 		reason := mappingReasonVerificationFailed
-		clearMappingID := false
 		if stderrors.Is(err, errAppProjectMappingMismatch) {
 			reason = mappingReasonMappingMismatch
-			clearMappingID = true
 		}
-		conditionErr := r.setMappingFailure(
+		conditionErr := r.setMappingCondition(
 			ctx,
 			agentCR,
 			reason,
 			err.Error(),
-			clearMappingID,
 		)
 		return ctrl.Result{}, stderrors.Join(err, conditionErr)
 	}
@@ -517,7 +620,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileAppProjectMapping(
 	if created {
 		reason = mappingReasonMappingCreated
 	}
-	if err := r.setVerifiedMappingStatus(ctx, agentCR, mapping, reason); err != nil {
+	if err := r.setVerifiedMappingStatus(ctx, agentCR, mapping, reason, created); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: r.harnessMappingResyncInterval()}, nil
@@ -680,24 +783,35 @@ func (r *HarnessGitopsAgentReconciler) setMappingCondition(
 	return r.Status().Update(ctx, agentCR)
 }
 
-func (r *HarnessGitopsAgentReconciler) setMappingFailure(
+func (r *HarnessGitopsAgentReconciler) setVerifiedMappingStatus(
 	ctx context.Context,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
+	mapping nextgen.V1AppProjectMappingV2,
 	reason string,
-	message string,
-	clearMappingID bool,
+	created bool,
 ) error {
-	fieldsChanged := false
-	if clearMappingID && agentCR.Status.ArgoProjectMappingId != "" {
-		agentCR.Status.ArgoProjectMappingId = ""
-		fieldsChanged = true
+	mappingOwnership := infrastructurev1.OwnershipExternal
+	if created ||
+		(agentCR.Status.ArgoProjectMappingId == mapping.Identifier &&
+			agentCR.Status.ArgoProjectMappingOwnership == infrastructurev1.OwnershipManaged) {
+		mappingOwnership = infrastructurev1.OwnershipManaged
 	}
+	fieldsChanged := agentCR.Status.ArgoProjectId != mapping.ArgoProjectName ||
+		agentCR.Status.ArgoProjectMappingId != mapping.Identifier ||
+		agentCR.Status.ArgoProjectMappingOwnership != mappingOwnership ||
+		agentCR.Status.ArgoProjectMappingOrgId != strings.TrimSpace(mapping.OrgIdentifier) ||
+		agentCR.Status.ArgoProjectMappingProjectId != strings.TrimSpace(mapping.ProjectIdentifier)
+	agentCR.Status.ArgoProjectId = mapping.ArgoProjectName
+	agentCR.Status.ArgoProjectMappingId = mapping.Identifier
+	agentCR.Status.ArgoProjectMappingOwnership = mappingOwnership
+	agentCR.Status.ArgoProjectMappingOrgId = strings.TrimSpace(mapping.OrgIdentifier)
+	agentCR.Status.ArgoProjectMappingProjectId = strings.TrimSpace(mapping.ProjectIdentifier)
 	conditionChanged := apiMeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
 		Type:               mappingReadyConditionType,
-		Status:             metav1.ConditionFalse,
+		Status:             metav1.ConditionTrue,
 		ObservedGeneration: agentCR.Generation,
 		Reason:             reason,
-		Message:            message,
+		Message:            "Harness AppProject mapping exists and matches the desired tuple",
 	})
 	if !fieldsChanged && !conditionChanged {
 		return nil
@@ -705,22 +819,26 @@ func (r *HarnessGitopsAgentReconciler) setMappingFailure(
 	return r.Status().Update(ctx, agentCR)
 }
 
-func (r *HarnessGitopsAgentReconciler) setVerifiedMappingStatus(
+func (r *HarnessGitopsAgentReconciler) setMappingRemovedStatus(
 	ctx context.Context,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
-	mapping nextgen.V1AppProjectMappingV2,
-	reason string,
 ) error {
-	fieldsChanged := agentCR.Status.ArgoProjectId != mapping.ArgoProjectName ||
-		agentCR.Status.ArgoProjectMappingId != mapping.Identifier
-	agentCR.Status.ArgoProjectId = mapping.ArgoProjectName
-	agentCR.Status.ArgoProjectMappingId = mapping.Identifier
+	fieldsChanged := agentCR.Status.ArgoProjectId != "" ||
+		agentCR.Status.ArgoProjectMappingId != "" ||
+		agentCR.Status.ArgoProjectMappingOwnership != "" ||
+		agentCR.Status.ArgoProjectMappingOrgId != "" ||
+		agentCR.Status.ArgoProjectMappingProjectId != ""
+	agentCR.Status.ArgoProjectId = ""
+	agentCR.Status.ArgoProjectMappingId = ""
+	agentCR.Status.ArgoProjectMappingOwnership = ""
+	agentCR.Status.ArgoProjectMappingOrgId = ""
+	agentCR.Status.ArgoProjectMappingProjectId = ""
 	conditionChanged := apiMeta.SetStatusCondition(&agentCR.Status.Conditions, metav1.Condition{
 		Type:               mappingReadyConditionType,
-		Status:             metav1.ConditionTrue,
+		Status:             metav1.ConditionFalse,
 		ObservedGeneration: agentCR.Generation,
-		Reason:             reason,
-		Message:            "Harness AppProject mapping exists and matches the desired tuple",
+		Reason:             mappingReasonMappingRemoved,
+		Message:            "No Harness AppProject mapping is desired",
 	})
 	if !fieldsChanged && !conditionChanged {
 		return nil

@@ -9,10 +9,17 @@
 #
 # Wait until the controller has written the token Secret
 # (kubectl get secret example-agent-token -n my-agent-ns), then enable the
-# runtime (phase two):
+# runtime and Argo CRDs (phase two):
 #
 #   helm upgrade my-agent . --namespace my-agent-ns \
-#     --reuse-values --set gitopsAgent.enabled=true --wait
+#     --reuse-values \
+#     --set gitopsAgent.enabled=true \
+#     --set appProject.enabled=false --wait
+#
+# Then create the normal Helm-managed AppProject after its CRD exists:
+#
+#   helm upgrade my-agent . --namespace my-agent-ns \
+#     --reuse-values --set appProject.enabled=true --wait
 #
 # Prerequisites: the harness-gitops-agent-operator controller is running in the
 # cluster, and Secret harness-api-key-secret (key: api_key) exists in the

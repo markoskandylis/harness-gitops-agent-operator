@@ -252,6 +252,33 @@ func TestExistingMatchingMappingIsRetrievedAndStored(t *testing.T) {
 	assertVerifiedMappingStatus(t, reconciler.Client, "mapping-existing", mappingReasonMappingVerified)
 }
 
+func TestManagedMappingOwnershipSurvivesLaterVerification(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
+		{mappings: []nextgen.V1AppProjectMappingV2{mappingTestRecord("mapping-managed", "org.", mappingTestOrg, mappingTestProject)}},
+	}}
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		ArgoProjectId:               mappingTestAppProject,
+		ArgoProjectMappingId:        "mapping-managed",
+		ArgoProjectMappingOwnership: infrastructurev1.OwnershipManaged,
+	}
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		true,
+		mappingAPI,
+		newReadyAgentChecker(),
+	)
+
+	if _, err := reconcileMappingForTest(t, reconciler, agent); err != nil {
+		t.Fatalf("reconcile mapping: %v", err)
+	}
+	current := getMappingTestAgent(t, reconciler.Client)
+	if current.Status.ArgoProjectMappingOwnership != infrastructurev1.OwnershipManaged {
+		t.Fatalf("managed ownership was lost during verification: %#v", current.Status)
+	}
+}
+
 func TestAlreadyExistsResponseRequiresFreshVerification(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{
 		listResults: []fakeMappingListResult{
@@ -294,8 +321,8 @@ func TestExistingMappingToAnotherProjectFailsWithMismatch(t *testing.T) {
 	}
 	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonMappingMismatch)
 	current := getMappingTestAgent(t, reconciler.Client)
-	if current.Status.ArgoProjectMappingId != "" {
-		t.Fatalf("stale mapping ID was retained after mismatch: %q", current.Status.ArgoProjectMappingId)
+	if current.Status.ArgoProjectMappingId != "stale-id" {
+		t.Fatalf("observed mapping identity was lost after mismatch: %q", current.Status.ArgoProjectMappingId)
 	}
 }
 
@@ -338,6 +365,196 @@ func TestExternallyRecreatedMappingUpdatesStaleID(t *testing.T) {
 		t.Fatalf("matching external recreation triggered a duplicate create: %d calls", mappingAPI.createCalls)
 	}
 	assertVerifiedMappingStatus(t, reconciler.Client, "mapping-new-id", mappingReasonMappingVerified)
+}
+
+func TestRemovingManagedMappingDeletesObservedTupleBeforeConverging(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{
+		mappings: []nextgen.V1AppProjectMappingV2{
+			mappingTestRecord("mapping-managed", "org.", mappingTestOrg, mappingTestProject),
+		},
+	}}}
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Spec.ProjectMapping = nil
+	agent.Status = managedMappingTestStatus("mapping-managed")
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		false,
+		mappingAPI,
+		newReadyAgentChecker(),
+		mappingTestAPIKeySecret(),
+	)
+
+	result, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
+	if err != nil {
+		t.Fatalf("remove managed mapping: %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("mapping cleanup must requeue before further mutations: %+v", result)
+	}
+	if mappingAPI.listCalls != 1 || mappingAPI.deleteCalls != 1 || mappingAPI.createCalls != 0 {
+		t.Fatalf("expected List -> Delete only, got list=%d delete=%d create=%d",
+			mappingAPI.listCalls, mappingAPI.deleteCalls, mappingAPI.createCalls)
+	}
+	current := getMappingTestAgent(t, reconciler.Client)
+	if current.Status.ArgoProjectMappingId != "" ||
+		current.Status.ArgoProjectMappingOwnership != "" ||
+		current.Status.ArgoProjectId != "" {
+		t.Fatalf("removed mapping remained in status: %#v", current.Status)
+	}
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonMappingRemoved)
+}
+
+func TestRemovingExternalMappingClearsStatusWithoutHarnessAPI(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{}
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Spec.ProjectMapping = nil
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		AgentIdentifier:             mappingTestAgentID,
+		AgentOwnership:              infrastructurev1.OwnershipExternal,
+		ArgoProjectId:               mappingTestAppProject,
+		ArgoProjectMappingId:        "mapping-external",
+		ArgoProjectMappingOwnership: infrastructurev1.OwnershipExternal,
+		ArgoProjectMappingOrgId:     mappingTestOrg,
+		ArgoProjectMappingProjectId: mappingTestProject,
+	}
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		false,
+		mappingAPI,
+		newReadyAgentChecker(),
+	)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent)); err != nil {
+		t.Fatalf("remove external mapping: %v", err)
+	}
+	if mappingAPI.listCalls != 0 || mappingAPI.deleteCalls != 0 {
+		t.Fatalf("external mapping removal contacted Harness: list=%d delete=%d",
+			mappingAPI.listCalls, mappingAPI.deleteCalls)
+	}
+	current := getMappingTestAgent(t, reconciler.Client)
+	if current.Status.ArgoProjectId != "" ||
+		current.Status.ArgoProjectMappingId != "" ||
+		current.Status.ArgoProjectMappingOwnership != "" ||
+		current.Status.ArgoProjectMappingOrgId != "" ||
+		current.Status.ArgoProjectMappingProjectId != "" {
+		t.Fatalf("removed external mapping remained in status: %#v", current.Status)
+	}
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonMappingRemoved)
+}
+
+func TestRemovingPendingMappingClearsItsCondition(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{}
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Spec.ProjectMapping = nil
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		AgentIdentifier: mappingTestAgentID,
+		AgentOwnership:  infrastructurev1.OwnershipExternal,
+		Conditions: []metav1.Condition{{
+			Type:               mappingReadyConditionType,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: agent.Generation,
+			Reason:             mappingReasonAppProjectNotFound,
+			Message:            "AppProject is pending",
+		}},
+	}
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		false,
+		mappingAPI,
+		newReadyAgentChecker(),
+	)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent)); err != nil {
+		t.Fatalf("remove pending mapping: %v", err)
+	}
+	if mappingAPI.listCalls != 0 || mappingAPI.deleteCalls != 0 {
+		t.Fatalf("pending mapping removal contacted Harness: list=%d delete=%d",
+			mappingAPI.listCalls, mappingAPI.deleteCalls)
+	}
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonMappingRemoved)
+}
+
+func TestChangingManagedMappingDeletesOldTupleBeforeCreatingNewOne(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{{
+		mappings: []nextgen.V1AppProjectMappingV2{
+			mappingTestRecord("mapping-managed", "org.", mappingTestOrg, mappingTestProject),
+		},
+	}}}
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Spec.ProjectMapping = &infrastructurev1.ProjectMappingSpec{
+		ProjectId:  "new-project",
+		AppProject: "new-app-project",
+	}
+	agent.Status = managedMappingTestStatus("mapping-managed")
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		false,
+		mappingAPI,
+		newReadyAgentChecker(),
+		mappingTestAPIKeySecret(),
+	)
+
+	result, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
+	if err != nil {
+		t.Fatalf("change managed mapping: %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("mapping replacement must requeue after deleting the old tuple: %+v", result)
+	}
+	if mappingAPI.deleteCalls != 1 || mappingAPI.createCalls != 0 {
+		t.Fatalf("old and new mapping mutations were combined: delete=%d create=%d",
+			mappingAPI.deleteCalls, mappingAPI.createCalls)
+	}
+	deleted := mappingAPI.deleteRequests[0]
+	if deleted.ArgoProjectName != mappingTestAppProject ||
+		deleted.Mapping.OrgIdentifier != mappingTestOrg ||
+		deleted.Mapping.ProjectIdentifier != mappingTestProject {
+		t.Fatalf("deleted the desired tuple instead of the observed old tuple: %#v", deleted)
+	}
+}
+
+func TestRemovingManagedMappingFailsClosedWithoutResolvedTuple(t *testing.T) {
+	agent := newMappingTestAgent("mapping-resource")
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Spec.ProjectMapping = nil
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		AgentIdentifier:             mappingTestAgentID,
+		AgentOwnership:              infrastructurev1.OwnershipExternal,
+		ArgoProjectId:               mappingTestAppProject,
+		ArgoProjectMappingId:        "managed-without-scope",
+		ArgoProjectMappingOwnership: infrastructurev1.OwnershipManaged,
+	}
+	mappingAPI := &fakeAppProjectMappingAPI{}
+	reconciler, agent := newMappingTestReconciler(
+		t,
+		agent,
+		false,
+		mappingAPI,
+		newReadyAgentChecker(),
+	)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
+	if err == nil {
+		t.Fatal("mapping removal should fail when the old scope cannot be proven")
+	}
+	if mappingAPI.listCalls != 0 || mappingAPI.deleteCalls != 0 {
+		t.Fatalf("incomplete status triggered remote cleanup: list=%d delete=%d",
+			mappingAPI.listCalls, mappingAPI.deleteCalls)
+	}
+	assertMappingCondition(t, reconciler.Client, agent.Name, metav1.ConditionFalse, mappingReasonCleanupBlocked)
 }
 
 func TestMappingWaitsForHarnessAgentExistence(t *testing.T) {
@@ -505,6 +722,25 @@ func mappingTestRecord(identifier string, agentPrefix string, orgID string, proj
 	}
 }
 
+func managedMappingTestStatus(mappingID string) infrastructurev1.HarnessGitopsAgentStatus {
+	return infrastructurev1.HarnessGitopsAgentStatus{
+		AgentIdentifier:             mappingTestAgentID,
+		AgentOwnership:              infrastructurev1.OwnershipExternal,
+		ArgoProjectId:               mappingTestAppProject,
+		ArgoProjectMappingId:        mappingID,
+		ArgoProjectMappingOwnership: infrastructurev1.OwnershipManaged,
+		ArgoProjectMappingOrgId:     mappingTestOrg,
+		ArgoProjectMappingProjectId: mappingTestProject,
+	}
+}
+
+func mappingTestAPIKeySecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: mappingTestNamespace},
+		Data:       map[string][]byte{"api_key": []byte("not-a-real-key")},
+	}
+}
+
 func reconcileMappingForTest(
 	t *testing.T,
 	reconciler *HarnessGitopsAgentReconciler,
@@ -568,6 +804,18 @@ func assertVerifiedMappingStatus(
 	if agent.Status.ArgoProjectId != mappingTestAppProject ||
 		agent.Status.ArgoProjectMappingId != mappingID {
 		t.Fatalf("unexpected verified mapping status: %#v", agent.Status)
+	}
+	wantOwnership := infrastructurev1.OwnershipExternal
+	if reason == mappingReasonMappingCreated {
+		wantOwnership = infrastructurev1.OwnershipManaged
+	}
+	if agent.Status.ArgoProjectMappingOwnership != wantOwnership {
+		t.Fatalf("unexpected mapping ownership: got %q, want %q",
+			agent.Status.ArgoProjectMappingOwnership, wantOwnership)
+	}
+	if agent.Status.ArgoProjectMappingOrgId != mappingTestOrg ||
+		agent.Status.ArgoProjectMappingProjectId != mappingTestProject {
+		t.Fatalf("resolved mapping scope was not stored: %#v", agent.Status)
 	}
 	condition := apiMeta.FindStatusCondition(agent.Status.Conditions, mappingReadyConditionType)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != reason {

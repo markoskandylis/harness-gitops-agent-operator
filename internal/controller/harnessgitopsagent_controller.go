@@ -88,19 +88,8 @@ func (r *HarnessGitopsAgentReconciler) Reconcile(ctx context.Context, req ctrl.R
 	existingAgentIdentifier := strings.TrimSpace(agentCR.Spec.ExistingAgentIdentifier)
 	existingAgentMode := existingAgentIdentifier != ""
 
-	// Deletion is handled before validation on purpose. A CR whose spec cannot
-	// pass validation must still be able to drop its finalizer, otherwise an
-	// invalid mapping strands the resource forever. The target is best effort
-	// here: nil simply means there is no mapping to clean up.
 	if agentCR.GetDeletionTimestamp() != nil {
-		target, err := projectMappingDetails(agentCR)
-		if err != nil {
-			// Deliberately not fatal, but never silent: in existing-agent mode a
-			// nil target skips mapping cleanup, which can orphan a live mapping.
-			logf.FromContext(ctx).Error(err,
-				"Proceeding with deletion despite an invalid spec.projectMapping; skipping mapping cleanup")
-		}
-		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode, target)
+		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode)
 	}
 
 	target, err := projectMappingDetails(agentCR)
@@ -202,7 +191,6 @@ func (r *HarnessGitopsAgentReconciler) reconcileDeletion(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	existingAgentIdentifier string,
 	existingAgentMode bool,
-	target *projectMappingTarget,
 ) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
 		return ctrl.Result{}, nil
@@ -210,26 +198,43 @@ func (r *HarnessGitopsAgentReconciler) reconcileDeletion(
 
 	log := logf.FromContext(ctx)
 	if existingAgentMode {
-		// Do not delete shared agents. Best effort cleanup for mapping created by this CR.
-		if target != nil {
-			harnessSession, err := r.getHarnessClient(ctx, agentCR)
+		// Do not delete shared agents. Only clean up a mapping this CR created.
+		if agentCR.Status.ArgoProjectMappingOwnership == infrastructurev1.OwnershipManaged {
+			cleanupTarget, err := managedMappingCleanupTarget(agentCR, nil)
 			if err != nil {
-				log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
+				log.Error(err, "Cannot resolve managed AppProject mapping for deletion; retaining finalizer")
 				return ctrl.Result{}, err
 			}
-			if err := r.deleteAppProjectMapping(
-				ctx,
-				harnessSession,
-				agentCR,
-				existingAgentIdentifier,
-				target,
-			); err != nil {
-				log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
-				return ctrl.Result{}, err
+			if cleanupTarget != nil {
+				harnessSession, err := r.getHarnessClient(ctx, agentCR)
+				if err != nil {
+					log.Error(err, "Failed to initialize Harness session for mapping delete; retaining finalizer")
+					return ctrl.Result{}, err
+				}
+				if err := r.deleteAppProjectMapping(
+					ctx,
+					harnessSession,
+					agentCR,
+					existingAgentIdentifier,
+					cleanupTarget,
+				); err != nil {
+					log.Error(err, "Failed to delete AppProject mapping; retaining finalizer")
+					return ctrl.Result{}, err
+				}
 			}
 		}
 
 		log.Info("Skipping Harness agent delete because existingAgentIdentifier is set", "existingAgentIdentifier", existingAgentIdentifier)
+		controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
+		return ctrl.Result{}, r.Update(ctx, agentCR)
+	}
+
+	if agentCR.Status.AgentOwnership != infrastructurev1.OwnershipManaged {
+		log.Info(
+			"Skipping Harness agent delete because controller ownership is not recorded",
+			"agentIdentifier", agentCR.Status.AgentIdentifier,
+			"agentOwnership", agentCR.Status.AgentOwnership,
+		)
 		controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
 		return ctrl.Result{}, r.Update(ctx, agentCR)
 	}
@@ -291,10 +296,33 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	}
 	tokenSecretReady := existingAgentMode || r.tokenSecretExists(ctx, agentCR, tokenSecretName)
 
+	if result, done, err := r.reconcileStaleMapping(
+		ctx,
+		agentCR,
+		existingAgentIdentifier,
+		existingAgentMode,
+		target,
+	); done {
+		return result, err
+	}
+
 	// Mapping-enabled resources must verify Harness state on every event or
 	// periodic resync. Local status fields are observations, not completion guards.
 	if agentDone && !needsMapping && tokenSecretReady {
 		return ctrl.Result{}, nil
+	}
+
+	// Never recover or regenerate credentials for an agent this CR did not
+	// demonstrably create. Empty ownership is intentionally fail-closed.
+	if !existingAgentMode &&
+		agentDone &&
+		!tokenSecretReady &&
+		agentCR.Status.AgentOwnership != infrastructurev1.OwnershipManaged {
+		return ctrl.Result{}, fmt.Errorf(
+			"%w for %q; set spec.existingAgentIdentifier to adopt the running agent explicitly",
+			errHarnessAgentOwnershipUnknown,
+			agentIdentifierForStatus(agentCR),
+		)
 	}
 
 	harnessSession, err := r.getHarnessClient(ctx, agentCR)
@@ -308,8 +336,10 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 
 	if existingAgentMode {
 		agentIdentifier = existingAgentIdentifier
-		if agentCR.Status.AgentIdentifier == "" {
+		if agentCR.Status.AgentIdentifier == "" ||
+			agentCR.Status.AgentOwnership != infrastructurev1.OwnershipExternal {
 			agentCR.Status.AgentIdentifier = agentIdentifier
+			agentCR.Status.AgentOwnership = infrastructurev1.OwnershipExternal
 			if err := r.Status().Update(ctx, agentCR); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -318,8 +348,7 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	} else if agentIdentifier == "" {
 		log.Info("Registering new Harness GitOps Agent...", "Name", agentCR.Spec.Name)
 
-		var alreadyExists bool
-		agentIdentifier, agentCredentials, alreadyExists, err = r.createHarnessAgent(harnessSession, agentCR, req.Namespace)
+		agentIdentifier, agentCredentials, err = r.createHarnessAgent(harnessSession, agentCR, req.Namespace)
 		if err != nil {
 			log.Error(err, "Harness API Call Failed")
 			if swaggerErr, ok := err.(nextgen.GenericSwaggerError); ok {
@@ -327,13 +356,10 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 			}
 			return ctrl.Result{}, err
 		}
-		if alreadyExists {
-			log.Info("Harness GitOps Agent already exists; continuing with existing identifier", "AgentID", agentIdentifier)
-		} else {
-			log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
-		}
+		log.Info("Registered new Harness GitOps Agent", "AgentID", agentIdentifier)
 
 		agentCR.Status.AgentIdentifier = agentIdentifier
+		agentCR.Status.AgentOwnership = infrastructurev1.OwnershipManaged
 		if err := r.Status().Update(ctx, agentCR); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -372,6 +398,13 @@ func (r *HarnessGitopsAgentReconciler) reconcileReady(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func agentIdentifierForStatus(agentCR *infrastructurev1.HarnessGitopsAgent) string {
+	if identifier := strings.TrimSpace(agentCR.Status.AgentIdentifier); identifier != "" {
+		return identifier
+	}
+	return strings.TrimSpace(agentCR.Spec.Identifier)
 }
 
 // optionalStr returns optional.NewString(s) when s is non-empty, otherwise

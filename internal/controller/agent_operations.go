@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,14 +19,18 @@ import (
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 )
 
-// createHarnessAgent registers an agent or adopts an already-existing agent.
-// It intentionally preserves the current controller behavior; ownership and
-// canonical identifier handling are addressed in later changes.
+var (
+	errHarnessAgentAlreadyExists    = errors.New("harness GitOps agent already exists")
+	errHarnessAgentOwnershipUnknown = errors.New("harness GitOps agent ownership is not proven")
+)
+
+// createHarnessAgent registers a new agent. An existing agent is returned as a
+// conflict so adoption is possible only through spec.existingAgentIdentifier.
 func (r *HarnessGitopsAgentReconciler) createHarnessAgent(
 	session *HarnessSession,
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	namespace string,
-) (string, *nextgen.V1AgentCredentials, bool, error) {
+) (string, *nextgen.V1AgentCredentials, error) {
 	gitopsAgentType := nextgen.V1AgentType(agentCR.Spec.Type)
 	gitopsAgentScope := nextgen.V1AgentScope(agentCR.Spec.Scope)
 	gitopsOperator := nextgen.V1AgentOperator(agentCR.Spec.Operator)
@@ -48,12 +53,16 @@ func (r *HarnessGitopsAgentReconciler) createHarnessAgent(
 	resp, _, err := session.Client.AgentApi.AgentServiceForServerCreate(session.AuthCtx, *createReq)
 	if err != nil {
 		if isHarnessAgentAlreadyExists(err) {
-			return strings.TrimSpace(agentCR.Spec.Identifier), nil, true, nil
+			return "", nil, fmt.Errorf(
+				"%w: %q; set spec.existingAgentIdentifier to adopt it explicitly",
+				errHarnessAgentAlreadyExists,
+				strings.TrimSpace(agentCR.Spec.Identifier),
+			)
 		}
-		return "", nil, false, err
+		return "", nil, err
 	}
 
-	return strings.TrimSpace(resp.Identifier), resp.Credentials, false, nil
+	return strings.TrimSpace(resp.Identifier), resp.Credentials, nil
 }
 
 // deleteHarnessAgent deletes an agent using the current API request contract.

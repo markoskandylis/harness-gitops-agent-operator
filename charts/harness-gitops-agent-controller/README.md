@@ -29,6 +29,8 @@ The CRD carries `helm.sh/resource-policy: keep`, so it and every `HarnessGitopsA
 survive uninstall. To also remove the CRD — **this deletes every `HarnessGitopsAgent`
 in the cluster** — delete the CRs first (so finalizers can deregister the agents in
 Harness), then `kubectl delete crd harnessgitopsagents.infrastructure.kandylis.co.uk`.
+Only controller-created agents are deregistered; agents referenced through
+`spec.existingAgentIdentifier` remain external.
 
 ## Values
 

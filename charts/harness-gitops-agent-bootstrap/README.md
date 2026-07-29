@@ -12,9 +12,10 @@ Bootstrap one Harness GitOps Agent instance managed by the
    official [Harness gitops-helm chart](https://harness.github.io/gitops-helm/)
    (Argo CD + GitOps agent). The runtime consumes the controller-written token
    via `agent.existingSecrets.agentToken`.
-4. The bundled Argo CRDs are installed with the runtime. The AppProject runs as
-   a post-install/post-upgrade hook after those CRDs are established, so a clean
-   cluster can install the runtime and AppProject in one Helm operation.
+4. The bundled Argo CRDs are installed with the runtime. The AppProject is a
+   normal Helm-managed resource, so upgrades patch it in place and uninstall
+   removes it. On a clean cluster, install the runtime/CRDs before enabling the
+   AppProject.
 5. Once the AppProject exists and the Harness agent is Connected and Healthy,
    the controller creates and verifies the exact mapping and periodically checks
    both readiness and mapping state for external drift.
@@ -57,18 +58,32 @@ helm upgrade --install my-agent . \
 # Wait for the controller-written token Secret
 kubectl get secret <tokenSecretRef> -n my-agent-ns
 
-# Phase two: install the agent runtime
+# Phase two: install the agent runtime and Argo CRDs
 helm upgrade my-agent . --namespace my-agent-ns \
-  --reuse-values --set gitopsAgent.enabled=true --wait
+  --reuse-values \
+  --set gitopsAgent.enabled=true \
+  --set appProject.enabled=false \
+  --wait
+
+# Phase three, when appProject.enabled is wanted: create it only after its CRD
+helm upgrade my-agent . --namespace my-agent-ns \
+  --reuse-values --set appProject.enabled=true --wait
 ```
 
-The AppProject uses Helm hook weight `0` with
-`before-hook-creation`. This ensures Argo CRDs exist before Helm asks
-Kubernetes to build the AppProject. On upgrade, Helm recreates the AppProject
-hook instead of patching it in place.
+If `appprojects.argoproj.io` already exists, phases two and three can be
+combined. This is common when Argo CD or another agent instance already
+installed the CRDs.
 
-Uninstalling the release deletes the CR; the controller finalizer then
-deregisters the agent from Harness.
+Uninstalling the release deletes the CR. The controller finalizer deregisters an
+agent created by that CR; an agent referenced with
+`harnessAgent.spec.existingAgentIdentifier` is external and remains in Harness.
+Helm also deletes the AppProject because it is part of the release.
+
+Harness identity fields are immutable after the CR is created. To change
+account, org/project scope, identifier, or `existingAgentIdentifier`, replace
+the CR. If registration reports that the identifier already exists, set
+`existingAgentIdentifier` on the replacement CR only when adopting that remote
+agent is intentional.
 
 ## Key values
 

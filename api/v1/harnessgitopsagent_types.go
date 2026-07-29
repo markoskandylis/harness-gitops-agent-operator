@@ -41,7 +41,22 @@ type ProjectMappingSpec struct {
 	AppProject string `json:"AppProject,omitempty"`
 }
 
-// HarnessGitopsAgentSpec defines the desired state of HarnessGitopsAgent
+// ResourceOwnership records whether this controller may manage a remote
+// Harness resource lifecycle.
+// +kubebuilder:validation:Enum=Managed;External
+type ResourceOwnership string
+
+const (
+	// OwnershipManaged means this controller successfully created the resource.
+	OwnershipManaged ResourceOwnership = "Managed"
+	// OwnershipExternal means the resource existed before this controller saw it.
+	OwnershipExternal ResourceOwnership = "External"
+)
+
+// HarnessGitopsAgentSpec defines the desired state of HarnessGitopsAgent.
+// Harness identity fields are immutable because changing them would leave the
+// previously registered remote agent outside the controller's lifecycle.
+// +kubebuilder:validation:XValidation:rule="self.name == oldSelf.name && self.operator == oldSelf.operator && self.identifier == oldSelf.identifier && self.accountId == oldSelf.accountId && self.type == oldSelf.type && self.scope == oldSelf.scope && has(self.orgId) == has(oldSelf.orgId) && (!has(self.orgId) || self.orgId == oldSelf.orgId) && has(self.projectId) == has(oldSelf.projectId) && (!has(self.projectId) || self.projectId == oldSelf.projectId) && has(self.existingAgentIdentifier) == has(oldSelf.existingAgentIdentifier) && (!has(self.existingAgentIdentifier) || self.existingAgentIdentifier == oldSelf.existingAgentIdentifier)",message="Harness agent identity is immutable; replace the resource instead"
 type HarnessGitopsAgentSpec struct {
 	// Name is the name of the Harness GitOps Agent
 	// +kubebuilder:validation:Required
@@ -103,6 +118,11 @@ type HarnessGitopsAgentStatus struct {
 	// AgentIdentifier is the ID returned by Harness after agent registration.
 	AgentIdentifier string `json:"agentIdentifier,omitempty"`
 
+	// AgentOwnership determines whether finalization may delete the remote agent.
+	// Empty means ownership was not proven and is handled as external.
+	// +optional
+	AgentOwnership ResourceOwnership `json:"agentOwnership,omitempty"`
+
 	// ArgoProjectId is the mapped ArgoCD AppProject name.
 	// Used as the `project:` field in ApplicationSets and Applications.
 	ArgoProjectId string `json:"argoProjectId,omitempty"`
@@ -111,6 +131,21 @@ type HarnessGitopsAgentStatus struct {
 	// Harness mapping verification. It is an observation, not an idempotency guard.
 	// +optional
 	ArgoProjectMappingId string `json:"argoProjectMappingId,omitempty"`
+
+	// ArgoProjectMappingOwnership determines whether finalization may delete the
+	// remote mapping. Empty is treated conservatively as external.
+	// +optional
+	ArgoProjectMappingOwnership ResourceOwnership `json:"argoProjectMappingOwnership,omitempty"`
+
+	// ArgoProjectMappingOrgId is the resolved Harness organization of the most
+	// recently verified mapping.
+	// +optional
+	ArgoProjectMappingOrgId string `json:"argoProjectMappingOrgId,omitempty"`
+
+	// ArgoProjectMappingProjectId is the resolved Harness project of the most
+	// recently verified mapping.
+	// +optional
+	ArgoProjectMappingProjectId string `json:"argoProjectMappingProjectId,omitempty"`
 
 	// Conditions store the detailed state transitions.
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`

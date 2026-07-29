@@ -128,12 +128,30 @@ spec:
             - name
             - operator
             type: object
+            x-kubernetes-validations:
+            - message: Harness agent identity is immutable; replace the resource instead
+              rule: self.name == oldSelf.name && self.operator == oldSelf.operator
+                && self.identifier == oldSelf.identifier && self.accountId == oldSelf.accountId
+                && self.type == oldSelf.type && self.scope == oldSelf.scope && has(self.orgId)
+                == has(oldSelf.orgId) && (!has(self.orgId) || self.orgId == oldSelf.orgId)
+                && has(self.projectId) == has(oldSelf.projectId) && (!has(self.projectId)
+                || self.projectId == oldSelf.projectId) && has(self.existingAgentIdentifier)
+                == has(oldSelf.existingAgentIdentifier) && (!has(self.existingAgentIdentifier)
+                || self.existingAgentIdentifier == oldSelf.existingAgentIdentifier)
           status:
             description: status defines the observed state of HarnessGitopsAgent
             properties:
               agentIdentifier:
                 description: AgentIdentifier is the ID returned by Harness after agent
                   registration.
+                type: string
+              agentOwnership:
+                description: |-
+                  AgentOwnership determines whether finalization may delete the remote agent.
+                  Empty means ownership was not proven and is handled as external.
+                enum:
+                - Managed
+                - External
                 type: string
               argoProjectId:
                 description: |-
@@ -144,6 +162,24 @@ spec:
                 description: |-
                   ArgoProjectMappingId is the identifier returned by the most recent successful
                   Harness mapping verification. It is an observation, not an idempotency guard.
+                type: string
+              argoProjectMappingOrgId:
+                description: |-
+                  ArgoProjectMappingOrgId is the resolved Harness organization of the most
+                  recently verified mapping.
+                type: string
+              argoProjectMappingOwnership:
+                description: |-
+                  ArgoProjectMappingOwnership determines whether finalization may delete the
+                  remote mapping. Empty is treated conservatively as external.
+                enum:
+                - Managed
+                - External
+                type: string
+              argoProjectMappingProjectId:
+                description: |-
+                  ArgoProjectMappingProjectId is the resolved Harness project of the most
+                  recently verified mapping.
                 type: string
               conditions:
                 description: Conditions store the detailed state transitions.

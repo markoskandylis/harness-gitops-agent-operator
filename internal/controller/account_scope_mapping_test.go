@@ -253,14 +253,15 @@ func TestOrgScopeStillFallsBackToAgentOrg(t *testing.T) {
 	}
 }
 
-// TestDeleteUsesLiveMappingIdNotStatus: the delete path must re-List. A
-// remembered ID proves a row exists, not that it is still ours.
-func TestDeleteUsesLiveMappingIdNotStatus(t *testing.T) {
+// TestDeleteRefusesExternallyRecreatedMapping: the delete path must re-List,
+// but an exact tuple with a new ID is no longer the row this controller created.
+func TestDeleteRefusesExternallyRecreatedMapping(t *testing.T) {
 	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
 		{mappings: accountScopeMappingRecords("live-id", accountScopeMappingOrg)},
 	}}
 	agent := newAccountScopeAgent(accountScopeMappingOrg)
 	agent.Status.ArgoProjectMappingId = "stale-id"
+	agent.Status.ArgoProjectMappingOwnership = infrastructurev1.OwnershipManaged
 	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
 
 	target := mustProjectMappingTarget(t, fetched)
@@ -270,14 +271,8 @@ func TestDeleteUsesLiveMappingIdNotStatus(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	if mappingAPI.deleteCalls != 1 {
-		t.Fatalf("expected exactly one delete, got %d", mappingAPI.deleteCalls)
-	}
-	if mappingAPI.deletedIDs[0] != "live-id" {
-		t.Fatalf("deleted the remembered ID instead of the live one: %q", mappingAPI.deletedIDs[0])
-	}
-	if got := mappingAPI.deleteRequests[0].Mapping.OrgIdentifier; got != accountScopeMappingOrg {
-		t.Fatalf("delete sent org %q, want %q", got, accountScopeMappingOrg)
+	if mappingAPI.deleteCalls != 0 {
+		t.Fatalf("externally recreated mapping was deleted: %d calls", mappingAPI.deleteCalls)
 	}
 }
 
@@ -288,6 +283,7 @@ func TestDeleteRefusesMappingOwnedByAnotherOrg(t *testing.T) {
 		{mappings: accountScopeMappingRecords("mapping-1", "some_other_org")},
 	}}
 	agent := newAccountScopeAgent(accountScopeMappingOrg)
+	agent.Status.ArgoProjectMappingOwnership = infrastructurev1.OwnershipManaged
 	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
 
 	target := mustProjectMappingTarget(t, fetched)
@@ -298,6 +294,65 @@ func TestDeleteRefusesMappingOwnedByAnotherOrg(t *testing.T) {
 	}
 	if mappingAPI.deleteCalls != 0 {
 		t.Fatalf("deleted a mapping owned by another org: %d calls", mappingAPI.deleteCalls)
+	}
+}
+
+func TestDeleteSkipsExternallyOwnedMapping(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{}
+	agent := newAccountScopeAgent(accountScopeMappingOrg)
+	agent.Status.ArgoProjectMappingId = "mapping-external"
+	agent.Status.ArgoProjectMappingOwnership = infrastructurev1.OwnershipExternal
+	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
+
+	target := mustProjectMappingTarget(t, fetched)
+	if err := reconciler.deleteAppProjectMapping(
+		context.Background(), nil, fetched, mappingTestAgentID, target,
+	); err != nil {
+		t.Fatalf("external mapping should be left untouched: %v", err)
+	}
+	if mappingAPI.listCalls != 0 || mappingAPI.deleteCalls != 0 {
+		t.Fatalf("external mapping triggered Harness mutations: list=%d delete=%d",
+			mappingAPI.listCalls, mappingAPI.deleteCalls)
+	}
+}
+
+func TestDeletionUsesObservedManagedMappingAfterSpecChanges(t *testing.T) {
+	mappingAPI := &fakeAppProjectMappingAPI{listResults: []fakeMappingListResult{
+		{mappings: accountScopeMappingRecords("mapping-managed", accountScopeMappingOrg)},
+	}}
+	agent := newAccountScopeAgent("new-org")
+	agent.Spec.ProjectMapping.ProjectId = "new-project"
+	agent.Spec.ProjectMapping.AppProject = "new-app-project"
+	agent.Spec.ExistingAgentIdentifier = mappingTestAgentID
+	agent.Finalizers = []string{harnessAgentFinalizer}
+	agent.Status = infrastructurev1.HarnessGitopsAgentStatus{
+		AgentIdentifier:             mappingTestAgentID,
+		AgentOwnership:              infrastructurev1.OwnershipExternal,
+		ArgoProjectId:               mappingTestAppProject,
+		ArgoProjectMappingId:        "mapping-managed",
+		ArgoProjectMappingOwnership: infrastructurev1.OwnershipManaged,
+		ArgoProjectMappingOrgId:     accountScopeMappingOrg,
+		ArgoProjectMappingProjectId: mappingTestProject,
+	}
+	reconciler, fetched := newAccountScopeReconciler(t, agent, mappingAPI)
+
+	if _, err := reconciler.reconcileDeletion(
+		context.Background(),
+		fetched,
+		mappingTestAgentID,
+		true,
+	); err != nil {
+		t.Fatalf("delete with changed mapping spec: %v", err)
+	}
+
+	if mappingAPI.deleteCalls != 1 {
+		t.Fatalf("expected observed mapping deletion, got %d calls", mappingAPI.deleteCalls)
+	}
+	request := mappingAPI.deleteRequests[0]
+	if request.ArgoProjectName != mappingTestAppProject ||
+		request.Mapping.OrgIdentifier != accountScopeMappingOrg ||
+		request.Mapping.ProjectIdentifier != mappingTestProject {
+		t.Fatalf("finalizer deleted current spec instead of observed tuple: %#v", request)
 	}
 }
 
