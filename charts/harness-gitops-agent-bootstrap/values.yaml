@@ -16,33 +16,39 @@ harnessAgent:
     operator: ARGO
     scope: PROJECT
     type: MANAGED_ARGO_PROVIDER
-    projectMapping:
-      # Org that owns projectId. REQUIRED at ACCOUNT scope, where the agent has
-      # no org of its own to inherit from. At ORG/PROJECT scope leave it empty
-      # and the controller falls back to the agent's org.
-      orgId: ""
-      projectId: ""
-      AppProject: ""
     existingAgentIdentifier: ""
-    # The Harness API key Secret must already exist in the controller-configured
-    # API key namespace, or this release namespace when no override is set. Its
-    # key is "api_key". Never put its value in chart values.
+    # The Harness API key Secret must already exist in the namespace configured
+    # on the controller. The controller Helm chart defaults that location to
+    # its own release namespace. Its key is "api_key"; never put the value here.
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: ""
+
+# Each entry becomes one independently reconciled HarnessGitopsProjectMapping
+# that references the Agent above. Add as many mappings as this Agent serves.
+projectMappings: []
+#  - name: default
+#    appProject: default
+#    # Required at ACCOUNT scope; projectId is also required at ORG scope.
+#    # At PROJECT scope both are inherited and should normally be omitted.
+#    orgId: ""
+#    projectId: ""
+#    autoCreateServiceEnv: false
+#    # Optional explicit ownership request for an existing Harness mapping.
+#    # The controller adopts only when this exact ID and full tuple match.
+#    adoptMappingId: ""
 
 appProject:
   enabled: false
   name: default
-  namespace: ""
   description: AppProject created for the Harness GitOps Agent instance
   annotations: {}
   labels: {}
 
-# Phase switch: with false only the CR is rendered (phase one). Enable the
-# runtime after the controller has written the token Secret so a failure to
-# produce the token is reported precisely instead of as generic unready pods.
+# The controller must already be installed. The Agent CR and runtime can then
+# be installed in one release: pods may briefly wait for the token Secret while
+# the controller registers the Agent and writes it.
 gitopsAgent:
-  enabled: false
+  enabled: true
   argo-cd:
     enabled: true
     # Set install: false on clusters that already have the Argo CRDs (for

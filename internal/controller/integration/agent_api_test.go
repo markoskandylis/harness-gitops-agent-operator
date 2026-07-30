@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package integration
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/controller/agent"
 )
 
 var _ = Describe("HarnessGitopsAgent Controller", func() {
@@ -116,7 +117,7 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 		})
 		It("should return an error when API key secret is missing", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &HarnessGitopsAgentReconciler{
+			controllerReconciler := &agentcontroller.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

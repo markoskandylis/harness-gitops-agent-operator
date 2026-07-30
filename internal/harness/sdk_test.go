@@ -1,4 +1,4 @@
-package controller
+package harness
 
 import (
 	"context"
@@ -12,6 +12,8 @@ import (
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 )
 
+const mappingTestAgentID = "mapping-agent"
+
 func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) {
 	var paths []string
 	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +26,7 @@ func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) 
 		http.Error(w, `{"message":"unexpected alternate candidate"}`, http.StatusInternalServerError)
 	}))
 
-	mappings, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest())
+	mappings, err := (SDKProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest())
 	if err != nil {
 		t.Fatalf("list mappings: %v", err)
 	}
@@ -49,7 +51,7 @@ func TestSDKMappingListFallsBackOnlyAfterNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`{"appProjectMappings":[]}`))
 	}))
 
-	if _, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err != nil {
+	if _, err := (SDKProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err != nil {
 		t.Fatalf("list mappings: %v", err)
 	}
 	want := []string{
@@ -69,7 +71,7 @@ func TestSDKMappingListDoesNotHideCanonicalServerError(t *testing.T) {
 		http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
 	}))
 
-	if _, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err == nil {
+	if _, err := (SDKProjectMappingAPI{}).List(context.Background(), session, sdkMappingTestRequest()); err == nil {
 		t.Fatal("expected the canonical server error to be returned")
 	}
 	want := []string{"/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings"}
@@ -93,11 +95,15 @@ func TestSDKAgentReadinessUsesConnectedHealthyPayload(t *testing.T) {
 		}`))
 	}))
 
-	readiness, err := (sdkAgentReadinessChecker{}).Readiness(
+	readiness, err := (SDKAgentAPI{}).Readiness(
 		context.Background(),
 		session,
-		newMappingTestAgent("mapping-resource"),
-		mappingTestAgentID,
+		Agent{
+			Identifier:        mappingTestAgentID,
+			AccountIdentifier: "account",
+			OrgIdentifier:     "org",
+			Scope:             "ORG",
+		},
 	)
 	if err != nil {
 		t.Fatalf("get agent readiness: %v", err)
@@ -142,7 +148,7 @@ func TestHarnessAgentReadinessRequiresConnectedAndHealthy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			readiness := readinessFromHarnessAgent(tt.agent)
+			readiness := readinessFromAgent(tt.agent)
 			if readiness.Exists != tt.wantExists || readiness.Ready != tt.wantReady {
 				t.Fatalf("unexpected readiness: got %#v", readiness)
 			}
@@ -166,7 +172,7 @@ func mappingSDKTestAgentHealth(
 	}}
 }
 
-func newSDKMappingTestSession(t *testing.T, handler http.Handler) *HarnessSession {
+func newSDKMappingTestSession(t *testing.T, handler http.Handler) *Session {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -174,21 +180,20 @@ func newSDKMappingTestSession(t *testing.T, handler http.Handler) *HarnessSessio
 	cfg := nextgen.NewConfiguration()
 	cfg.BasePath = server.URL
 	cfg.HTTPClient.RetryMax = 0
-	return &HarnessSession{
-		Client:  nextgen.NewAPIClient(cfg),
-		AuthCtx: context.Background(),
+	return &Session{
+		client: nextgen.NewAPIClient(cfg),
 	}
 }
 
-func sdkMappingTestRequest() appProjectMappingRequest {
-	return appProjectMappingRequest{
+func sdkMappingTestRequest() ProjectMappingRequest {
+	return ProjectMappingRequest{
 		AgentIdentifier:   "mapping-agent",
 		AccountIdentifier: "account",
 		AgentScope:        "ORG",
 		// At ORG scope both scopes hold the same org. That coincidence is why a
 		// single org field survived until ACCOUNT scope exposed it.
-		Agent:           harnessScope{OrgIdentifier: "org"},
-		Mapping:         harnessScope{OrgIdentifier: "org"},
+		Agent:           Scope{OrgIdentifier: "org"},
+		Mapping:         Scope{OrgIdentifier: "org"},
 		ArgoProjectName: "default",
 	}
 }
@@ -196,15 +201,15 @@ func sdkMappingTestRequest() appProjectMappingRequest {
 // sdkAccountScopeRequest is deliberately built with DIFFERENT agent and mapping
 // scopes. sdkMappingTestRequest sets both orgs to "org", which means no test
 // using it can tell the two apart -- that is precisely how B12 stayed invisible.
-func sdkAccountScopeRequest() appProjectMappingRequest {
-	return appProjectMappingRequest{
+func sdkAccountScopeRequest() ProjectMappingRequest {
+	return ProjectMappingRequest{
 		AgentIdentifier:   "mapping-agent",
 		AccountIdentifier: "account",
 		AgentScope:        "ACCOUNT",
 		// ACCOUNT-scoped agents live at account level: no org, no project.
-		Agent: harnessScope{},
+		Agent: Scope{},
 		// The mapped project always has both.
-		Mapping:         harnessScope{OrgIdentifier: "harness_controllers", ProjectIdentifier: "hub_orchistrator"},
+		Mapping:         Scope{OrgIdentifier: "harness_controllers", ProjectIdentifier: "hub_orchistrator"},
 		ArgoProjectName: "default",
 	}
 }
@@ -222,7 +227,9 @@ func TestSDKMappingCreateSendsMappingScope(t *testing.T) {
 		_, _ = w.Write([]byte(`{"identifier":"mapping-1"}`))
 	}))
 
-	if err := (sdkAppProjectMappingAPI{}).Create(context.Background(), session, sdkAccountScopeRequest()); err != nil {
+	request := sdkAccountScopeRequest()
+	request.AutoCreateServiceEnv = true
+	if _, err := (SDKProjectMappingAPI{}).Create(context.Background(), session, request); err != nil {
 		t.Fatalf("create mapping: %v", err)
 	}
 	if body.OrgIdentifier != "harness_controllers" {
@@ -230,6 +237,30 @@ func TestSDKMappingCreateSendsMappingScope(t *testing.T) {
 	}
 	if body.ProjectIdentifier != "hub_orchistrator" {
 		t.Fatalf("create body projectIdentifier = %q, want the MAPPED project", body.ProjectIdentifier)
+	}
+	if !body.AutoCreateServiceEnv {
+		t.Fatal("create body did not preserve autoCreateServiceEnv")
+	}
+}
+
+func TestSDKMappingCreateStopsOnNonNotFoundError(t *testing.T) {
+	var paths []string
+	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
+	}))
+
+	if _, err := (SDKProjectMappingAPI{}).Create(
+		context.Background(),
+		session,
+		sdkAccountScopeRequest(),
+	); err == nil {
+		t.Fatal("expected the canonical server error to be returned")
+	}
+	want := []string{"/gitops/api/v2/agents/account.mapping-agent/appprojectsmapping"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("non-404 create error was retried on alternate candidates: got %#v, want %#v", paths, want)
 	}
 }
 
@@ -244,7 +275,7 @@ func TestSDKMappingListSendsAgentScope(t *testing.T) {
 		_, _ = w.Write([]byte(`{"appProjectMappings":[]}`))
 	}))
 
-	if _, err := (sdkAppProjectMappingAPI{}).List(context.Background(), session, sdkAccountScopeRequest()); err != nil {
+	if _, err := (SDKProjectMappingAPI{}).List(context.Background(), session, sdkAccountScopeRequest()); err != nil {
 		t.Fatalf("list mappings: %v", err)
 	}
 	if got := query.Get("orgIdentifier"); got != "" {
@@ -270,7 +301,7 @@ func TestSDKMappingDeleteSendsMappingScope(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
 
-	if err := (sdkAppProjectMappingAPI{}).Delete(
+	if err := (SDKProjectMappingAPI{}).Delete(
 		context.Background(), session, sdkAccountScopeRequest(), "mapping-1",
 	); err != nil {
 		t.Fatalf("delete mapping: %v", err)
@@ -298,7 +329,7 @@ func TestSDKMappingDeleteStopsOnNonNotFoundError(t *testing.T) {
 		http.Error(w, `{"message":"server error"}`, http.StatusInternalServerError)
 	}))
 
-	if err := (sdkAppProjectMappingAPI{}).Delete(
+	if err := (SDKProjectMappingAPI{}).Delete(
 		context.Background(), session, sdkAccountScopeRequest(), "mapping-1",
 	); err == nil {
 		t.Fatal("expected the canonical server error to be returned")

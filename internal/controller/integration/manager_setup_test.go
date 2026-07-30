@@ -1,0 +1,47 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package integration
+
+import (
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	"github.com/markoskandylis/harness-gitops-agent-operator/internal/controller"
+)
+
+var _ = Describe("Manager setup", func() {
+	It("registers both controllers and their watches", func() {
+		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+			Scheme:                  scheme.Scheme,
+			Metrics:                 metricsserver.Options{BindAddress: "0"},
+			HealthProbeBindAddress:  "0",
+			LeaderElectionNamespace: "default",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		err = controller.SetupWithManager(mgr, controller.Options{
+			APIKeySecretNamespace:          "controller-system",
+			AppProjectPendingRetryInterval: controller.DefaultAppProjectPendingRetryInterval,
+			HarnessMappingResyncInterval:   controller.DefaultHarnessMappingResyncInterval,
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+})

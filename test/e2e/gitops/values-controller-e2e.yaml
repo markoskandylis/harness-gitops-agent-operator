@@ -6,8 +6,8 @@
 #
 # Phase one deliberately installs the runtime with the agent scaled to zero.
 # That gives the controller an AppProject and registered-but-unhealthy agent,
-# so the pipeline can prove MappingReady=False/AgentNotHealthy. Phase two sets
-# gitopsAgent.agent.replicas=1 and waits for MappingReady=True.
+# so the pipeline can prove Mapping Ready=False/AgentNotHealthy. Phase two sets
+# gitopsAgent.agent.replicas=1 and waits for Mapping Ready=True.
 global:
   image:
     repository: docker.io/harness/argocd
@@ -21,9 +21,12 @@ harnessAgent:
     scope: ORG
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: ""
-    projectMapping:
-      projectId: ""
-      AppProject: default
+
+projectMappings:
+  - name: mapping-probe
+    projectId: ""
+    appProject: default
+    autoCreateServiceEnv: false
 
 appProject:
   enabled: true

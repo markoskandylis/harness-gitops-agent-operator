@@ -1,9 +1,8 @@
-package controller
+package agent
 
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,24 +13,54 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
-func TestCreateHarnessAgentRequiresExplicitAdoption(t *testing.T) {
-	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"message":"agent already exists"}`, http.StatusConflict)
-	}))
-	agent := newAgentOwnershipTestResource("")
+type createConflictAgentAPI struct{}
 
-	identifier, credentials, err := (&HarnessGitopsAgentReconciler{}).createHarnessAgent(
-		session,
+func (createConflictAgentAPI) Create(
+	context.Context,
+	*harnessapi.Session,
+	harnessapi.CreateAgentRequest,
+) (harnessapi.CreateAgentResult, error) {
+	return harnessapi.CreateAgentResult{}, harnessapi.ErrAgentAlreadyExists
+}
+
+func (createConflictAgentAPI) Lookup(
+	context.Context,
+	*harnessapi.Session,
+	harnessapi.Agent,
+) (harnessapi.AgentLookupResult, error) {
+	return harnessapi.AgentLookupResult{}, nil
+}
+
+func (createConflictAgentAPI) Delete(context.Context, *harnessapi.Session, harnessapi.Agent) error {
+	return nil
+}
+
+func (createConflictAgentAPI) ResolveToken(
+	context.Context,
+	*harnessapi.Session,
+	harnessapi.Agent,
+	string,
+) (string, error) {
+	return "", nil
+}
+
+func TestCreateHarnessAgentRequiresExplicitAdoption(t *testing.T) {
+	agent := newAgentOwnershipTestResource("")
+	reconciler := &Reconciler{agentAPI: createConflictAgentAPI{}}
+
+	identifier, credentials, err := reconciler.createHarnessAgent(
+		context.Background(),
+		nil,
 		agent,
 		agent.Namespace,
 	)
 	if !errors.Is(err, errHarnessAgentAlreadyExists) {
 		t.Fatalf("expected an explicit-adoption conflict, got %v", err)
 	}
-	if identifier != "" || credentials != nil {
+	if identifier != "" || credentials != "" {
 		t.Fatalf("an existing agent must not be adopted implicitly: identifier=%q credentials=%#v",
 			identifier, credentials)
 	}
@@ -76,9 +105,6 @@ func TestDeletionOfExternalAgentDoesNotRequireAPIKey(t *testing.T) {
 		t,
 		infrastructurev1.OwnershipExternal,
 	)
-	agent.Status.ArgoProjectId = "app-project"
-	agent.Status.ArgoProjectMappingId = "external-mapping"
-	agent.Status.ArgoProjectMappingOwnership = infrastructurev1.OwnershipExternal
 
 	if _, err := reconciler.reconcileDeletion(
 		context.Background(),
@@ -99,6 +125,41 @@ func TestDeletionOfExternalAgentDoesNotRequireAPIKey(t *testing.T) {
 	}
 	if len(updated.Finalizers) != 0 {
 		t.Fatalf("external resource retained finalizers: %v", updated.Finalizers)
+	}
+}
+
+func TestExistingAgentRecordsExternalOwnershipWithoutAPIKey(t *testing.T) {
+	reconciler, agent := newAgentOwnershipTestReconciler(t, "")
+	agent.Spec.ExistingAgentIdentifier = "existing-agent"
+	agent.Status.AgentIdentifier = ""
+
+	if err := reconciler.Update(context.Background(), agent); err != nil {
+		t.Fatalf("update existing agent spec: %v", err)
+	}
+	if err := reconciler.Status().Update(context.Background(), agent); err != nil {
+		t.Fatalf("clear existing agent status: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(
+		context.Background(),
+		ctrlRequestFor(agent),
+	); err != nil {
+		t.Fatalf("existing agent should not require an API key: %v", err)
+	}
+
+	updated := &infrastructurev1.HarnessGitopsAgent{}
+	if err := reconciler.Get(
+		context.Background(),
+		client.ObjectKeyFromObject(agent),
+		updated,
+	); err != nil {
+		t.Fatalf("get existing agent: %v", err)
+	}
+	if updated.Status.AgentIdentifier != "existing-agent" {
+		t.Fatalf("agent identifier = %q, want existing-agent", updated.Status.AgentIdentifier)
+	}
+	if updated.Status.AgentOwnership != infrastructurev1.OwnershipExternal {
+		t.Fatalf("agent ownership = %q, want External", updated.Status.AgentOwnership)
 	}
 }
 
@@ -177,7 +238,7 @@ func ctrlRequestFor(agent *infrastructurev1.HarnessGitopsAgent) ctrl.Request {
 func newAgentOwnershipTestReconciler(
 	t *testing.T,
 	ownership infrastructurev1.ResourceOwnership,
-) (*HarnessGitopsAgentReconciler, *infrastructurev1.HarnessGitopsAgent) {
+) (*Reconciler, *infrastructurev1.HarnessGitopsAgent) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -204,9 +265,10 @@ func newAgentOwnershipTestReconciler(
 		t.Fatalf("get test agent: %v", err)
 	}
 
-	return &HarnessGitopsAgentReconciler{
-		Client: k8sClient,
-		Scheme: scheme,
+	return &Reconciler{
+		Client:    k8sClient,
+		APIReader: k8sClient,
+		Scheme:    scheme,
 	}, fetched
 }
 
@@ -217,6 +279,7 @@ func newAgentOwnershipTestResource(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "ownership-test-agent",
 			Namespace:  "default",
+			UID:        "ownership-test-uid",
 			Finalizers: []string{harnessAgentFinalizer},
 		},
 		Spec: infrastructurev1.HarnessGitopsAgentSpec{

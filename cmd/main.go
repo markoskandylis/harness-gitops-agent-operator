@@ -97,7 +97,7 @@ func main() {
 		&appProjectPendingRetryInterval,
 		"app-project-pending-retry-interval",
 		controller.DefaultAppProjectPendingRetryInterval,
-		"How often a mapping-enabled Agent retries while its AppProject is absent.",
+		"How often a project Mapping retries while its AppProject or Agent is not ready.",
 	)
 	flag.DurationVar(
 		&harnessMappingResyncInterval,
@@ -223,15 +223,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.HarnessGitopsAgentReconciler{
-		Client:                         mgr.GetClient(),
-		APIReader:                      mgr.GetAPIReader(),
-		Scheme:                         mgr.GetScheme(),
+	if err := controller.SetupWithManager(mgr, controller.Options{
 		APIKeySecretNamespace:          apiKeySecretNamespace,
 		AppProjectPendingRetryInterval: appProjectPendingRetryInterval,
 		HarnessMappingResyncInterval:   harnessMappingResyncInterval,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HarnessGitopsAgent")
+	}); err != nil {
+		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

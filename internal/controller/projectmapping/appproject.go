@@ -1,19 +1,15 @@
-package controller
+package projectmapping
 
 import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 )
 
 var (
@@ -37,13 +33,15 @@ func newAppProjectObject(namespace string, name string) *unstructured.Unstructur
 	return appProject
 }
 
-func (r *HarnessGitopsAgentReconciler) appProjectExists(
+func appProjectExists(
 	ctx context.Context,
+	reader client.Reader,
+	dynamicClient dynamic.Interface,
 	namespace string,
 	name string,
 ) (bool, error) {
-	if r.appProjectClient != nil {
-		_, err := r.appProjectClient.Resource(appProjectGVR).Namespace(namespace).Get(
+	if dynamicClient != nil {
+		_, err := dynamicClient.Resource(appProjectGVR).Namespace(namespace).Get(
 			ctx,
 			name,
 			metav1.GetOptions{},
@@ -59,7 +57,7 @@ func (r *HarnessGitopsAgentReconciler) appProjectExists(
 
 	// Unit tests can use the controller-runtime fake client without a REST config.
 	appProject := newAppProjectObject(namespace, name)
-	err := r.Get(ctx, client.ObjectKeyFromObject(appProject), appProject)
+	err := reader.Get(ctx, client.ObjectKeyFromObject(appProject), appProject)
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
@@ -67,20 +65,4 @@ func (r *HarnessGitopsAgentReconciler) appProjectExists(
 		return false, fmt.Errorf("get AppProject %s/%s: %w", namespace, name, err)
 	}
 	return true, nil
-}
-
-// SetupWithManager configures polling-based AppProject reconciliation. The
-// dynamic client keeps manager startup independent of the optional AppProject CRD.
-func (r *HarnessGitopsAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	dynamicClient, err := dynamic.NewForConfig(mgr.GetConfig())
-	if err != nil {
-		return fmt.Errorf("create AppProject dynamic client: %w", err)
-	}
-	r.appProjectClient = dynamicClient
-
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrastructurev1.HarnessGitopsAgent{}).
-		Owns(&corev1.Secret{}).
-		Named("harnessgitopsagent").
-		Complete(r)
 }

@@ -24,3 +24,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: {{ include "harness-gitops-agent-bootstrap.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{- /*
+The Agent and every Mapping must resolve this name identically. Keep the
+Harness identifier as the fallback for existing values files, while allowing a
+DNS-safe Kubernetes name to be supplied independently.
+*/ -}}
+{{- define "harness-gitops-agent-bootstrap.agentResourceName" -}}
+{{- $identity := .Values.gitopsAgent.harness.identity -}}
+{{- $fallback := required "gitopsAgent.harness.identity.agentIdentifier is required" (trim (default "" $identity.agentIdentifier)) -}}
+{{- required "harnessAgent.metadata.name or gitopsAgent.harness.identity.agentIdentifier is required" (trim (default $fallback .Values.harnessAgent.metadata.name)) -}}
+{{- end }}

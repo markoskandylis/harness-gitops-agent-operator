@@ -66,6 +66,7 @@ type mappingProbeConfig struct {
 	kubeconfigContext string
 	agentNamespace    string
 	agentName         string
+	mappingName       string
 	tokenSecret       string
 	apiKeySecret      string
 	projectID         string
@@ -110,21 +111,34 @@ var _ = Describe("Helm-installed mapping and remote Git plugin", Serial, Label("
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(strings.EqualFold(agent.Spec.Scope, "ORG")).To(BeTrue())
 			g.Expect(strings.TrimSpace(agent.Spec.ProjectId)).To(BeEmpty())
-			g.Expect(agent.Spec.ProjectMapping).NotTo(BeNil())
-			if agent.Spec.ProjectMapping != nil {
-				g.Expect(agent.Spec.ProjectMapping.ProjectId).To(Equal(cfg.projectID))
-				g.Expect(agent.Spec.ProjectMapping.AppProject).To(Equal(cfg.appProject))
-			}
 			g.Expect(agent.Spec.ApiKeySecretRef).To(Equal(cfg.apiKeySecret))
 			g.Expect(agent.Spec.TokenSecretRef).To(Equal(cfg.tokenSecret))
 			g.Expect(agent.Finalizers).To(ContainElement("infrastructure.kandylis.co.uk/finalizer"))
-			g.Expect(agent.Status.ArgoProjectId).To(Equal(cfg.appProject))
-			g.Expect(strings.TrimSpace(agent.Status.ArgoProjectMappingId)).NotTo(BeEmpty())
-			condition := apiMeta.FindStatusCondition(agent.Status.Conditions, "MappingReady")
+			g.Expect(strings.TrimSpace(agent.Status.AgentIdentifier)).NotTo(BeEmpty())
+
+			mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: cfg.agentNamespace,
+				Name:      cfg.mappingName,
+			}, mapping)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(mapping.Spec.AgentRef.Name).To(Equal(cfg.agentName))
+			g.Expect(mapping.Spec.ProjectID).To(Equal(cfg.projectID))
+			g.Expect(mapping.Spec.AppProject).To(Equal(cfg.appProject))
+			g.Expect(mapping.Finalizers).To(
+				ContainElement("infrastructure.kandylis.co.uk/project-mapping-finalizer"),
+			)
+			g.Expect(mapping.Status.Remote).NotTo(BeNil())
+			if mapping.Status.Remote != nil {
+				g.Expect(strings.TrimSpace(mapping.Status.Remote.MappingID)).NotTo(BeEmpty())
+				g.Expect(mapping.Status.Remote.Target.ProjectID).To(Equal(cfg.projectID))
+				g.Expect(mapping.Status.Remote.Target.AppProject).To(Equal(cfg.appProject))
+			}
+			condition := apiMeta.FindStatusCondition(mapping.Status.Conditions, "Ready")
 			g.Expect(condition).NotTo(BeNil())
 			if condition != nil {
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-				g.Expect(condition.ObservedGeneration).To(Equal(agent.Generation))
+				g.Expect(condition.ObservedGeneration).To(Equal(mapping.Generation))
 			}
 
 			token := &corev1.Secret{}
@@ -229,6 +243,7 @@ func loadMappingProbeConfig() (mappingProbeConfig, error) {
 		"E2E_KUBECONFIG_CONTEXT":                 strings.TrimSpace(os.Getenv("E2E_KUBECONFIG_CONTEXT")),
 		"HARNESS_MAPPING_AGENT_NAMESPACE":        strings.TrimSpace(os.Getenv("HARNESS_MAPPING_AGENT_NAMESPACE")),
 		"HARNESS_MAPPING_AGENT_NAME":             strings.TrimSpace(os.Getenv("HARNESS_MAPPING_AGENT_NAME")),
+		"HARNESS_MAPPING_RESOURCE_NAME":          strings.TrimSpace(os.Getenv("HARNESS_MAPPING_RESOURCE_NAME")),
 		"HARNESS_MAPPING_AGENT_TOKEN_SECRET":     strings.TrimSpace(os.Getenv("HARNESS_MAPPING_AGENT_TOKEN_SECRET")),
 		"HARNESS_MAPPING_API_KEY_SECRET":         strings.TrimSpace(os.Getenv("HARNESS_MAPPING_API_KEY_SECRET")),
 		"HARNESS_MAPPING_PROJECT_ID":             strings.TrimSpace(os.Getenv("HARNESS_MAPPING_PROJECT_ID")),
@@ -260,6 +275,7 @@ func loadMappingProbeConfig() (mappingProbeConfig, error) {
 		kubeconfigContext: values["E2E_KUBECONFIG_CONTEXT"],
 		agentNamespace:    values["HARNESS_MAPPING_AGENT_NAMESPACE"],
 		agentName:         values["HARNESS_MAPPING_AGENT_NAME"],
+		mappingName:       values["HARNESS_MAPPING_RESOURCE_NAME"],
 		tokenSecret:       values["HARNESS_MAPPING_AGENT_TOKEN_SECRET"],
 		apiKeySecret:      values["HARNESS_MAPPING_API_KEY_SECRET"],
 		projectID:         values["HARNESS_MAPPING_PROJECT_ID"],

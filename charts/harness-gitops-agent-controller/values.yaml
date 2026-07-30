@@ -6,7 +6,7 @@ revisionHistoryLimit: 5
 
 image:
   repository: mkandylis/harness-gitops-agent-operator
-  tag: v0.4.0
+  tag: v0.5.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -20,10 +20,9 @@ serviceAccount:
 rbac:
   create: true
 
-# CRD lifecycle. The chart installs the HarnessGitopsAgent CRD by default and
-# annotates it with helm.sh/resource-policy: keep so `helm uninstall` never
-# removes it (deleting the CRD would delete every HarnessGitopsAgent). Set
-# enabled=false to manage the CRD out-of-band (for example, by a platform team).
+# CRD lifecycle. The chart installs both Harness GitOps CRDs by default and
+# annotates them with helm.sh/resource-policy: keep so `helm uninstall` never
+# removes their instances. Set enabled=false to manage the CRDs out-of-band.
 crds:
   enabled: true
   keep: true
@@ -32,8 +31,8 @@ leaderElection:
   enabled: true
 
 manager:
-  # Empty keeps the API key Secret namespaced with each agent CR. Set this to
-  # the controller namespace to centralize API credentials away from runtimes.
+  # Empty uses the controller Helm release namespace. Set an explicit namespace
+  # only when API key Secrets are managed somewhere else.
   apiKeySecretNamespace: ""
   appProjectPendingRetryInterval: 20s
   harnessMappingResyncInterval: 5m

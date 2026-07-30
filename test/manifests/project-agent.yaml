@@ -30,8 +30,3 @@ spec:
   # Secret the controller creates/updates with key GITOPS_AGENT_TOKEN.
   # The gitops-helm runtime consumes it via agent.existingSecrets.agentToken.
   tokenSecretRef: project-agent-token
-  # Optional: map an Argo CD AppProject to a Harness project.
-  # Both fields are required together.
-  # projectMapping:
-  #   projectId: "<PROJECT_ID>"
-  #   AppProject: default

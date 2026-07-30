@@ -1,17 +1,17 @@
 # Manual controller test manifests
 
-Bare `HarnessGitopsAgent` custom resources for testing the **controller alone**
-with `kubectl apply` — registration, token Secret, mapping, and finalizer
-cleanup — without installing the GitOps agent runtime. To install a complete
-agent instance (CR **and** runtime), use
+Bare custom resources for testing the **controller alone** with `kubectl
+apply`—registration, token Secret, separate mappings, and finalizer cleanup—
+without installing the GitOps agent runtime. To install a complete agent
+instance (CRs **and** runtime), use
 [`charts/harness-gitops-agent-bootstrap`](../../charts/harness-gitops-agent-bootstrap)
 instead.
 
 | File | Scope | Shows |
 |---|---|---|
-| `project-agent.yaml` | PROJECT | Minimal project-level agent (`projectId` required); mapping commented out |
+| `project-agent.yaml` | PROJECT | Minimal project-level agent (`projectId` required) |
 | `org-agent.yaml` | ORG | Minimal org-level agent (no `projectId`) |
-| `org-agent-with-mapping.yaml` | ORG | Org agent plus AppProject → Harness project mapping |
+| `org-agent-with-mapping.yaml` | ORG | Agent plus a separate AppProject → Harness project Mapping CR |
 
 ## Flow
 
@@ -27,6 +27,9 @@ kubectl apply -f test/manifests/project-agent.yaml
 # 3. Verify the controller did its work
 kubectl -n argocd-agent get harnessgitopsagent project-agent -o yaml   # .status.agentIdentifier set
 kubectl -n argocd-agent get secret project-agent-token                 # GITOPS_AGENT_TOKEN written
+
+# A mapping manifest also requires the named Argo CD AppProject to exist.
+kubectl -n argocd-agent get harnessgitopsprojectmapping
 
 # 4. Clean up — the finalizer deregisters the agent from Harness
 kubectl delete -f test/manifests/project-agent.yaml

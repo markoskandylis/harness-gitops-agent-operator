@@ -28,4 +28,7 @@ func TestAppProjectIsManagedAsNormalHelmResource(t *testing.T) {
 	if !strings.Contains(content, ".Values.appProject.annotations") {
 		t.Fatal("custom AppProject annotations were removed")
 	}
+	if !strings.Contains(content, `.Capabilities.APIVersions.Has "argoproj.io/v1alpha1/AppProject"`) {
+		t.Fatal("AppProject template must fail before rendering when its CRD is unavailable")
+	}
 }

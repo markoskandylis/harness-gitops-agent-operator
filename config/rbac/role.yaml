@@ -35,13 +35,26 @@ rules:
   - infrastructure.kandylis.co.uk
   resources:
   - harnessgitopsagents/finalizers
+  - harnessgitopsprojectmappings/finalizers
   verbs:
   - update
 - apiGroups:
   - infrastructure.kandylis.co.uk
   resources:
   - harnessgitopsagents/status
+  - harnessgitopsprojectmappings/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - infrastructure.kandylis.co.uk
+  resources:
+  - harnessgitopsprojectmappings
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

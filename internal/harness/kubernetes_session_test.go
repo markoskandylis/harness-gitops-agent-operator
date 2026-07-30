@@ -1,4 +1,4 @@
-package controller
+package harness
 
 import (
 	"context"
@@ -21,7 +21,7 @@ const (
 )
 
 func TestHarnessClientUsesConfiguredAPIKeySecretNamespace(t *testing.T) {
-	reconciler := newAPIKeyNamespaceTestReconciler(t, apiKeyTestControllerNamespace, &corev1.Secret{
+	reader := newAPIKeyNamespaceTestReader(t, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apiKeyTestSecretName,
 			Namespace: apiKeyTestControllerNamespace,
@@ -29,13 +29,18 @@ func TestHarnessClientUsesConfiguredAPIKeySecretNamespace(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	if _, err := reconciler.getHarnessClient(context.Background(), newAPIKeyNamespaceTestAgent()); err != nil {
+	if _, err := SessionForAgent(
+		context.Background(),
+		reader,
+		apiKeyTestControllerNamespace,
+		newAPIKeyNamespaceTestAgent(),
+	); err != nil {
 		t.Fatalf("get Harness client from configured Secret namespace: %v", err)
 	}
 }
 
 func TestHarnessClientDefaultsAPIKeySecretToAgentNamespace(t *testing.T) {
-	reconciler := newAPIKeyNamespaceTestReconciler(t, "", &corev1.Secret{
+	reader := newAPIKeyNamespaceTestReader(t, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apiKeyTestSecretName,
 			Namespace: apiKeyTestAgentNamespace,
@@ -43,13 +48,18 @@ func TestHarnessClientDefaultsAPIKeySecretToAgentNamespace(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	if _, err := reconciler.getHarnessClient(context.Background(), newAPIKeyNamespaceTestAgent()); err != nil {
+	if _, err := SessionForAgent(
+		context.Background(),
+		reader,
+		"",
+		newAPIKeyNamespaceTestAgent(),
+	); err != nil {
 		t.Fatalf("get Harness client from agent Secret namespace: %v", err)
 	}
 }
 
 func TestConfiguredAPIKeySecretNamespaceDoesNotFallBack(t *testing.T) {
-	reconciler := newAPIKeyNamespaceTestReconciler(t, apiKeyTestControllerNamespace, &corev1.Secret{
+	reader := newAPIKeyNamespaceTestReader(t, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apiKeyTestSecretName,
 			Namespace: apiKeyTestAgentNamespace,
@@ -57,27 +67,27 @@ func TestConfiguredAPIKeySecretNamespaceDoesNotFallBack(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	_, err := reconciler.getHarnessClient(context.Background(), newAPIKeyNamespaceTestAgent())
+	_, err := SessionForAgent(
+		context.Background(),
+		reader,
+		apiKeyTestControllerNamespace,
+		newAPIKeyNamespaceTestAgent(),
+	)
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("expected configured Secret namespace to be authoritative, got %v", err)
 	}
 }
 
-func newAPIKeyNamespaceTestReconciler(
+func newAPIKeyNamespaceTestReader(
 	t *testing.T,
-	secretNamespace string,
 	objects ...client.Object,
-) *HarnessGitopsAgentReconciler {
+) client.Reader {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core Kubernetes scheme: %v", err)
 	}
-	return &HarnessGitopsAgentReconciler{
-		Client:                fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
-		Scheme:                scheme,
-		APIKeySecretNamespace: secretNamespace,
-	}
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
 func newAPIKeyNamespaceTestAgent() *infrastructurev1.HarnessGitopsAgent {

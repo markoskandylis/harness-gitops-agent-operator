@@ -5,25 +5,13 @@
 #   helm dependency build .
 #   helm upgrade --install my-agent . \
 #     --namespace my-agent-ns --create-namespace \
-#     --values my-values.yaml
+#     --values my-values.yaml --wait --timeout 10m
 #
-# Wait until the controller has written the token Secret
-# (kubectl get secret example-agent-token -n my-agent-ns), then enable the
-# runtime and Argo CRDs (phase two):
-#
-#   helm upgrade my-agent . --namespace my-agent-ns \
-#     --reuse-values \
-#     --set gitopsAgent.enabled=true \
-#     --set appProject.enabled=false --wait
-#
-# Then create the normal Helm-managed AppProject after its CRD exists:
-#
-#   helm upgrade my-agent . --namespace my-agent-ns \
-#     --reuse-values --set appProject.enabled=true --wait
-#
-# Prerequisites: the harness-gitops-agent-operator controller is running in the
-# cluster, and Secret harness-api-key-secret (key: api_key) exists in the
-# release namespace. Run one agent instance per namespace.
+# Prerequisites: the harness-gitops-agent-operator controller is running, and
+# Secret harness-api-key-secret (key: api_key) exists in the API-key namespace
+# configured on that controller (its Helm release namespace by default). The
+# runtime pods may briefly wait for the token Secret while the controller
+# registers the Agent. Run one Agent per namespace.
 
 harnessAgent:
   metadata:
@@ -33,16 +21,17 @@ harnessAgent:
     scope: PROJECT # PROJECT | ORG | ACCOUNT
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: example-agent-token
-    # Optional: map an Argo CD AppProject to a Harness project.
-    projectMapping:
-      # Org that owns projectId. REQUIRED at ACCOUNT scope (the agent has no org
-      # of its own); optional at ORG/PROJECT scope, where it falls back to
-      # gitopsAgent.harness.identity.orgIdentifier.
-      orgId: ""
-      projectId: your-project-id
-      AppProject: default
+
+# At PROJECT scope orgId/projectId are inherited from the Agent. Each entry is
+# independently reconciled and may optionally adopt one exact existing mapping.
+projectMappings:
+  - name: default
+    appProject: default
+    autoCreateServiceEnv: false
+    # adoptMappingId: existing-harness-mapping-id
 
 gitopsAgent:
+  enabled: true
   argo-cd:
     # Set false when the cluster already has the Argo CRDs (existing Argo CD
     # or another agent instance).
@@ -63,4 +52,6 @@ gitopsAgent:
       agentToken: example-agent-token
 
 appProject:
-  enabled: true
+  # Keep false on a clean cluster. After this install creates the Argo CRD, a
+  # later Helm upgrade can enable the convenience AppProject resource.
+  enabled: false

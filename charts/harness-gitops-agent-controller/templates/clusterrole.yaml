@@ -6,19 +6,26 @@ metadata:
   labels:
     {{- include "harness-gitops-agent-controller.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["argoproj.io"]
-    resources: ["appprojects"]
-    verbs: ["get"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["appprojects"]
+    verbs: ["get"]
   - apiGroups: ["infrastructure.kandylis.co.uk"]
     resources: ["harnessgitopsagents"]
     verbs: ["get", "list", "patch", "update", "watch"]
   - apiGroups: ["infrastructure.kandylis.co.uk"]
-    resources: ["harnessgitopsagents/finalizers"]
+    resources:
+      - harnessgitopsagents/finalizers
+      - harnessgitopsprojectmappings/finalizers
     verbs: ["update"]
   - apiGroups: ["infrastructure.kandylis.co.uk"]
-    resources: ["harnessgitopsagents/status"]
+    resources:
+      - harnessgitopsagents/status
+      - harnessgitopsprojectmappings/status
     verbs: ["get", "patch", "update"]
+  - apiGroups: ["infrastructure.kandylis.co.uk"]
+    resources: ["harnessgitopsprojectmappings"]
+    verbs: ["delete", "get", "list", "patch", "update", "watch"]
 {{- end }}

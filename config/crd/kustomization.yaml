@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/infrastructure.kandylis.co.uk_harnessgitopsagents.yaml
+- bases/infrastructure.kandylis.co.uk_harnessgitopsprojectmappings.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
