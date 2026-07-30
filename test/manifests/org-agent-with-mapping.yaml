@@ -1,12 +1,12 @@
-# ORG-scoped HarnessGitopsAgent with an AppProject mapping.
+# ORG-scoped HarnessGitopsAgent with a separate AppProject mapping.
 #
 # Same prerequisites as project-agent.yaml. Replace every <...> placeholder
 # before applying.
 #
 # The mapping binds one Argo CD AppProject served by this org-level agent to
 # one Harness project: GitOps entities in that AppProject surface in the
-# mapped project. On success the controller also populates
-# .status.argoProjectId and .status.argoProjectMappingId.
+# mapped project. On success the Mapping resource records its remote ID and
+# ownership under .status.remote.
 apiVersion: infrastructure.kandylis.co.uk/v1
 kind: HarnessGitopsAgent
 metadata:
@@ -22,8 +22,16 @@ spec:
   type: MANAGED_ARGO_PROVIDER
   apiKeySecretRef: harness-api-key-secret
   tokenSecretRef: org-agent-mapped-token
-  projectMapping:
-    # Harness project that receives the mapping.
-    projectId: "<PROJECT_ID>"
-    # Argo CD AppProject name; "default" exists in every Argo install.
-    AppProject: default
+---
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsProjectMapping
+metadata:
+  name: org-agent-default
+  namespace: argocd-agent
+spec:
+  agentRef:
+    name: org-agent-mapped
+  # Harness project that receives the mapping.
+  projectId: "<PROJECT_ID>"
+  # Argo CD AppProject name; "default" exists in every Argo install.
+  appProject: default

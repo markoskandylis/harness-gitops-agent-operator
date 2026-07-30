@@ -1,4 +1,4 @@
-package controller
+package agent
 
 import (
 	"context"
@@ -40,7 +40,6 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 			Type:            "MANAGED_ARGO_PROVIDER",
 			ApiKeySecretRef: "intentionally-absent-api-key",
 			TokenSecretRef:  "project-agent-token",
-			ProjectMapping:  nil,
 		},
 		Status: infrastructurev1.HarnessGitopsAgentStatus{
 			AgentIdentifier: "project_agent_no_mapping",
@@ -54,7 +53,7 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 		Data: map[string][]byte{gitopsAgentTokenSecretKey: []byte("token")},
 	}
 
-	reconciler := &HarnessGitopsAgentReconciler{
+	reconciler := &Reconciler{
 		Client: fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).
@@ -69,7 +68,11 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project-scoped agent without mapping should already be ready: %v", err)
 	}
-	if result != (ctrl.Result{}) {
-		t.Fatalf("expected no requeue for ready agent without mapping, got %#v", result)
+	if result.RequeueAfter != agentHealthFastResync {
+		t.Fatalf(
+			"health requeueAfter = %s, want %s while the API key is unavailable",
+			result.RequeueAfter,
+			agentHealthFastResync,
+		)
 	}
 }

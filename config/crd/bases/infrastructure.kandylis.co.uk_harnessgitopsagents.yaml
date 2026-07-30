@@ -11,15 +11,14 @@ spec:
     kind: HarnessGitopsAgent
     listKind: HarnessGitopsAgentList
     plural: harnessgitopsagents
+    shortNames:
+    - hga
     singular: harnessgitopsagent
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.agentIdentifier
       name: Agent
-      type: string
-    - jsonPath: .status.argoProjectId
-      name: ArgoProject
       type: string
     name: v1
     schema:
@@ -76,33 +75,13 @@ spec:
               projectId:
                 description: ProjectId is the Harness Project Identifier
                 type: string
-              projectMapping:
-                description: |-
-                  ProjectMapping configures explicit Harness project <-> ArgoCD AppProject mapping.
-                  Optional, and supported for ACCOUNT, ORG, or PROJECT scope.
-                properties:
-                  AppProject:
-                    description: |-
-                      AppProject is the ArgoCD AppProject name to map.
-                      Intentionally exported as AppProject to match the requested CR manifest contract.
-                    type: string
-                  orgId:
-                    description: |-
-                      OrgId is the Harness organization that owns ProjectId. It is a property of
-                      the mapping, not of the agent: an ACCOUNT-scoped agent exists to serve
-                      projects in many orgs and therefore has no org of its own (Spec.OrgId is
-                      empty by design), so the org has to be supplied per mapping.
-                      When empty the controller falls back to Spec.OrgId, which keeps ORG- and
-                      PROJECT-scoped agents working without setting this field.
-                    type: string
-                  projectId:
-                    description: ProjectId is the Harness project identifier to map
-                      to.
-                    type: string
-                type: object
               scope:
                 default: PROJECT
                 description: Scope of the agent (e.g., "ACCOUNT", "ORG", "PROJECT")
+                enum:
+                - ACCOUNT
+                - ORG
+                - PROJECT
                 type: string
               tokenSecretRef:
                 description: |-
@@ -124,6 +103,16 @@ spec:
             - name
             - operator
             type: object
+            x-kubernetes-validations:
+            - message: Harness agent identity is immutable; replace the resource instead
+              rule: self.name == oldSelf.name && self.operator == oldSelf.operator
+                && self.identifier == oldSelf.identifier && self.accountId == oldSelf.accountId
+                && self.type == oldSelf.type && self.scope == oldSelf.scope && has(self.orgId)
+                == has(oldSelf.orgId) && (!has(self.orgId) || self.orgId == oldSelf.orgId)
+                && has(self.projectId) == has(oldSelf.projectId) && (!has(self.projectId)
+                || self.projectId == oldSelf.projectId) && has(self.existingAgentIdentifier)
+                == has(oldSelf.existingAgentIdentifier) && (!has(self.existingAgentIdentifier)
+                || self.existingAgentIdentifier == oldSelf.existingAgentIdentifier)
           status:
             description: status defines the observed state of HarnessGitopsAgent
             properties:
@@ -131,15 +120,14 @@ spec:
                 description: AgentIdentifier is the ID returned by Harness after agent
                   registration.
                 type: string
-              argoProjectId:
+              agentOwnership:
                 description: |-
-                  ArgoProjectId is the mapped ArgoCD AppProject name.
-                  Used as the `project:` field in ApplicationSets and Applications.
-                type: string
-              argoProjectMappingId:
-                description: |-
-                  ArgoProjectMappingId is the identifier returned by the most recent successful
-                  Harness mapping verification. It is an observation, not an idempotency guard.
+                  AgentOwnership determines whether finalization may delete the remote agent.
+                  Empty means ownership was not proven and is handled as external.
+                enum:
+                - Managed
+                - Adopted
+                - External
                 type: string
               conditions:
                 description: Conditions store the detailed state transitions.
@@ -198,6 +186,14 @@ spec:
                   - type
                   type: object
                 type: array
+              creationState:
+                description: |-
+                  CreationState records durable create intent until the Harness Agent is
+                  verified as owned by this exact Kubernetes resource.
+                enum:
+                - Pending
+                - OutcomeUnknown
+                type: string
             type: object
         required:
         - spec

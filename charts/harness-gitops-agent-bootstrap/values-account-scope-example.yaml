@@ -1,4 +1,4 @@
-# ACCOUNT-scope agent with a project mapping.
+# ACCOUNT-scope Agent with two project mappings.
 #
 # This is the shape that B12 existed to make possible. An ACCOUNT-scoped agent
 # is registered at account level and therefore has NO org of its own:
@@ -6,9 +6,8 @@
 # carries no spec.orgId. The org that owns the MAPPED project is a property of
 # the mapping, not of the agent, so it has to be supplied here.
 #
-# Omit projectMapping.orgId and the render hard-fails on purpose. Without that
-# guard the failure is silent in the worst way: the AppProject is still created
-# on the cluster, so it looks like it worked while nothing is mapped in Harness.
+# Every Mapping requires its own orgId/projectId pair; the render hard-fails if
+# either is missing.
 #
 #   helm dependency build .
 #   helm upgrade --install account-agent . \
@@ -21,15 +20,31 @@ harnessAgent:
   spec:
     name: account-agent
     scope: ACCOUNT
+    # This Secret lives in the namespace configured on the controller, not
+    # necessarily in this bootstrap release namespace.
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: account-agent-token
-    projectMapping:
-      # No fallback exists at ACCOUNT scope -- this is required.
-      orgId: your-org-id
-      projectId: your-project-id
-      AppProject: default
+
+# ACCOUNT scope is the many-project case: each Mapping carries its complete
+# Harness target and all Mapping resources reference the same Agent CR.
+projectMappings:
+  - name: platform-payments
+    appProject: payments
+    orgId: platform
+    projectId: payments
+    autoCreateServiceEnv: false
+
+  - name: commerce-orders
+    appProject: orders
+    orgId: commerce
+    projectId: orders
+    autoCreateServiceEnv: true
+    # Optional: claim this exact pre-existing Harness mapping after full tuple
+    # verification. Leave absent to create or observe without adoption.
+    # adoptMappingId: existing-orders-mapping-id
 
 gitopsAgent:
+  enabled: true
   argo-cd:
     crds:
       install: true
@@ -48,4 +63,6 @@ gitopsAgent:
       agentToken: account-agent-token
 
 appProject:
-  enabled: true
+  # This convenience creates only one AppProject and requires its CRD to exist
+  # before Helm renders it. Create the named AppProjects separately here.
+  enabled: false

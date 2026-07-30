@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-07-30T12:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="hga-architecture" name="Architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="cluster-box" value="Kubernetes cluster" style="swimlane;html=1;horizontal=1;startSize=36;rounded=1;arcSize=8;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=16;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="950" height="900" as="geometry"/>
+        </mxCell>
+        <mxCell id="manager-box" value="One controller-runtime manager" style="swimlane;html=1;horizontal=1;startSize=34;rounded=1;arcSize=8;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=15;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="350" y="80" width="570" height="490" as="geometry"/>
+        </mxCell>
+        <mxCell id="harness-box" value="Harness Platform" style="swimlane;html=1;horizontal=1;startSize=36;rounded=1;arcSize=8;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=16;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="20" width="550" height="900" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="api-secret" value="API key Secret&#xa;api_key&#xa;(central namespace recommended)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="90" width="230" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="agent-cr" value="HarnessGitopsAgent&#xa;short name: hga&#xa;one Harness Agent identity" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="225" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-group" value="HarnessGitopsProjectMapping (hgapm)&#xa;one Agent → many independent resources" style="swimlane;html=1;horizontal=1;startSize=48;rounded=1;arcSize=8;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="55" y="375" width="245" height="245" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-a" value="payments mapping" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="445" width="195" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-b" value="orders mapping" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="505" width="195" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-n" value="… mapping N" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="565" width="195" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="appproject-group" value="Argo CD AppProjects&#xa;same namespace as Mapping CRs" style="swimlane;html=1;horizontal=1;startSize=44;rounded=1;arcSize=8;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="55" y="675" width="245" height="185" as="geometry"/>
+        </mxCell>
+        <mxCell id="appproject-a" value="payments" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="80" y="740" width="195" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="appproject-b" value="orders / …" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="80" y="795" width="195" height="38" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="agent-reconciler" value="Agent reconciler&#xa;registration • token • deletion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="155" width="220" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-reconciler" value="Mapping reconciler&#xa;resolve • verify • own • finalize" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="660" y="155" width="220" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="controller-watch-note" value="controller/agent + controller/projectmapping&#xa;small setup façade • bidirectional watches • Agent index" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="270" width="350" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="harness-boundary" value="Shared internal/harness boundary&#xa;session • errors • identifier candidates&#xa;Agent API • Mapping API • readiness" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="470" y="390" width="330" height="105" as="geometry"/>
+        </mxCell>
+        <mxCell id="token-secret" value="Agent token Secret&#xa;GITOPS_AGENT_TOKEN" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="390" y="675" width="205" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="runtime" value="Harness GitOps Agent runtime&#xa;(official gitops-helm)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="675" y="675" width="225" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="scope-note" value="Scope invariant&#xa;ACCOUNT Agent lookup = account only&#xa;Mapping target = its own org + project" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="425" y="805" width="430" height="75" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="remote-agent" value="Harness Agent&#xa;Managed or External&#xa;created Agents tagged hga_cr_uid" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1135" y="150" width="290" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="remote-mapping-group" value="Harness AppProject mapping rows" style="swimlane;html=1;horizontal=1;startSize=40;rounded=1;arcSize=8;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;swimlaneFillColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="1085" y="370" width="390" height="270" as="geometry"/>
+        </mxCell>
+        <mxCell id="remote-mapping-a" value="row A: payments → platform/payments&#xa;Managed / Adopted / External" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="440" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="remote-mapping-b" value="row B: orders → commerce/orders&#xa;independent ID, status, and ownership" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="525" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="remote-safety" value="Remote writes are fail-closed&#xa;Persist intent → API call → exact tuple/ID verification" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1115" y="720" width="330" height="82" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="edge-agent-watch" value="watch / reconcile" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" parent="1" source="agent-cr" target="agent-reconciler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-mapping-watch" value="watch / reconcile" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;" edge="1" parent="1" source="mapping-group" target="mapping-reconciler">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-agent-ref" value="agentRef (1:N)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=open;endFill=0;strokeColor=#666666;" edge="1" parent="1" source="mapping-group" target="agent-cr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-appproject" value="each name must exist" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=open;endFill=0;strokeColor=#d79b00;" edge="1" parent="1" source="appproject-group" target="mapping-group">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-agent-boundary" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="agent-reconciler" target="harness-boundary">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-mapping-boundary" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="mapping-reconciler" target="harness-boundary">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-api-key" value="read api_key" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=block;endFill=1;strokeColor=#b85450;" edge="1" parent="1" source="api-secret" target="harness-boundary">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-remote-agent" value="Create / Lookup / Delete / Readiness" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" parent="1" source="harness-boundary" target="remote-agent">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-remote-mapping" value="List / Create / Delete" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#9673a6;" edge="1" parent="1" source="harness-boundary" target="remote-mapping-group">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-token-write" value="write / repair" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" parent="1" source="agent-reconciler" target="token-secret">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-token-read" value="mount / read" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="token-secret" target="runtime">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-runtime-connect" value="connects" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="runtime" target="remote-agent">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge-remote-one-many" value="one Agent serves many rows" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;endArrow=open;endFill=0;strokeColor=#666666;" edge="1" parent="1" source="remote-agent" target="remote-mapping-group">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="hga-deletion" name="Deletion ordering">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="d0"/>
+        <mxCell id="d1" parent="d0"/>
+        <mxCell id="delete-title" value="Agent deletion is coordinated explicitly — no ownerReferences" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="250" y="30" width="1100" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="delete-agent" value="1. Agent receives&#xa;deletionTimestamp" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="55" y="145" width="205" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="fresh-list" value="2. Agent finalizer uses&#xa;fresh APIReader list&#xa;for referencing Mappings" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="320" y="135" width="235" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="request-delete" value="3. Request deletion of&#xa;every Mapping CR&#xa;Ready=False / WaitingForMappings" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="615" y="130" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-finalizer" value="4. Each Mapping finalizer&#xa;checks stored ownership&#xa;and create state first" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="935" y="135" width="245" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ownership-decision" value="Deletion ownership&#xa;or uncertain create?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="1260" y="120" width="230" height="130" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="managed-path" value="Managed or Adopted&#xa;fresh claim + Harness List&#xa;exact tuple → delete remote row" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="1030" y="365" width="230" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="external-path" value="External or empty&#xa;fast path: no Secret / Harness call&#xa;→ leave remote row intact" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="1285" y="365" width="230" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="unknown-path" value="Fresh claim + Harness List&#xa;Pending ID → grace + verify&#xa;OutcomeUnknown → exact adoption" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="750" y="365" width="235" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="mapping-gone" value="5. Remove Mapping finalizer&#xa;Mapping CR disappears" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="1110" y="565" width="250" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="all-gone" value="6. Fresh list proves all&#xa;referencing Mappings are gone" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="790" y="565" width="250" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="agent-cleanup" value="7. Agent finalizer&#xa;Managed / verified uncertain → delete&#xa;External → leave intact" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="470" y="555" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="agent-gone" value="8. Remove Agent finalizer&#xa;Agent CR disappears" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="170" y="565" width="235" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="delete-credential-note" value="Keep the controller and API-key Secret available until finalization completes.&#xa;Central API-key storage avoids losing cleanup credentials with the runtime namespace." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;" vertex="1" parent="d1">
+          <mxGeometry x="310" y="770" width="980" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="mismatch-note" value="Safety rule: only the claim winner may delete, and only when the remembered ID still matches the complete stored tuple." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d1">
+          <mxGeometry x="440" y="700" width="720" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d-edge-1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="delete-agent" target="fresh-list">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="fresh-list" target="request-delete">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="request-delete" target="mapping-finalizer">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="mapping-finalizer" target="ownership-decision">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-managed" value="Managed / Adopted" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" parent="d1" source="ownership-decision" target="managed-path">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-external" value="External / empty" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="d1" source="ownership-decision" target="external-path">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-unknown" value="Pending / unknown" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b85450;" edge="1" parent="d1" source="ownership-decision" target="unknown-path">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-managed-done" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#82b366;" edge="1" parent="d1" source="managed-path" target="mapping-gone">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-external-done" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#6c8ebf;" edge="1" parent="d1" source="external-path" target="mapping-gone">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-mapping-gone" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="mapping-gone" target="all-gone">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-all-gone" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="all-gone" target="agent-cleanup">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="d-edge-agent-gone" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;" edge="1" parent="d1" source="agent-cleanup" target="agent-gone">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

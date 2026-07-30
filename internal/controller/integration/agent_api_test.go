@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package integration
 
 import (
 	"context"
@@ -23,14 +23,52 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
 )
 
 var _ = Describe("HarnessGitopsAgent Controller", func() {
+	It("keeps remote agent identity immutable", func() {
+		resource := &infrastructurev1.HarnessGitopsAgent{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "immutable-agent",
+				Namespace: "default",
+			},
+			Spec: infrastructurev1.HarnessGitopsAgentSpec{
+				Name:            "immutable-agent",
+				Identifier:      "immutable-agent",
+				Operator:        "ARGO",
+				AccountId:       "account",
+				OrgId:           "org",
+				ProjectId:       "project",
+				Scope:           "PROJECT",
+				Type:            "MANAGED_ARGO_PROVIDER",
+				ApiKeySecretRef: "api-key",
+				TokenSecretRef:  "agent-token",
+			},
+		}
+		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		DeferCleanup(func() {
+			current := &infrastructurev1.HarnessGitopsAgent{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(resource), current); err == nil {
+				Expect(k8sClient.Delete(ctx, current)).To(Succeed())
+			}
+		})
+
+		resource.Spec.ApiKeySecretRef = "rotated-api-key"
+		Expect(k8sClient.Update(ctx, resource)).To(Succeed())
+
+		resource.Spec.ExistingAgentIdentifier = "shared-agent"
+		err := k8sClient.Update(ctx, resource)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("Harness agent identity is immutable"))
+	})
+
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -79,7 +117,7 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 		})
 		It("should return an error when API key secret is missing", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &HarnessGitopsAgentReconciler{
+			controllerReconciler := &agentcontroller.Reconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
