@@ -19,29 +19,32 @@ import (
 )
 
 type fakeAgentRegistrationAPI struct {
-	lookupResult  harnessapi.AgentLookupResult
+	lookupResult  AgentLookupResult
 	lookupErr     error
-	createResult  harnessapi.CreateAgentResult
+	createResult  CreateAgentResult
 	createErr     error
 	deleteErr     error
 	resolveErr    error
+	readinessErr  error
 	resolvedToken string
+	readiness     AgentReadiness
 	commitCreate  bool
 
-	lookupCalls  int
-	createCalls  int
-	deleteCalls  int
-	resolveCalls int
-	lastLookup   harnessapi.Agent
-	lastCreate   harnessapi.CreateAgentRequest
-	lastDelete   harnessapi.Agent
+	lookupCalls    int
+	createCalls    int
+	deleteCalls    int
+	resolveCalls   int
+	readinessCalls int
+	lastLookup     Agent
+	lastCreate     CreateAgentRequest
+	lastDelete     Agent
 }
 
 func (f *fakeAgentRegistrationAPI) Lookup(
 	_ context.Context,
 	_ *harnessapi.Session,
-	agent harnessapi.Agent,
-) (harnessapi.AgentLookupResult, error) {
+	agent Agent,
+) (AgentLookupResult, error) {
 	f.lookupCalls++
 	f.lastLookup = agent
 	return f.lookupResult, f.lookupErr
@@ -50,8 +53,8 @@ func (f *fakeAgentRegistrationAPI) Lookup(
 func (f *fakeAgentRegistrationAPI) Create(
 	_ context.Context,
 	_ *harnessapi.Session,
-	request harnessapi.CreateAgentRequest,
-) (harnessapi.CreateAgentResult, error) {
+	request CreateAgentRequest,
+) (CreateAgentResult, error) {
 	f.createCalls++
 	f.lastCreate = request
 	if f.commitCreate {
@@ -59,7 +62,7 @@ func (f *fakeAgentRegistrationAPI) Create(
 		if f.createResult.Identifier != "" {
 			created.Identifier = f.createResult.Identifier
 		}
-		f.lookupResult = harnessapi.AgentLookupResult{
+		f.lookupResult = AgentLookupResult{
 			Exists: true,
 			Agent:  created,
 		}
@@ -70,7 +73,7 @@ func (f *fakeAgentRegistrationAPI) Create(
 func (f *fakeAgentRegistrationAPI) Delete(
 	_ context.Context,
 	_ *harnessapi.Session,
-	agent harnessapi.Agent,
+	agent Agent,
 ) error {
 	f.deleteCalls++
 	f.lastDelete = agent
@@ -80,7 +83,7 @@ func (f *fakeAgentRegistrationAPI) Delete(
 func (f *fakeAgentRegistrationAPI) ResolveToken(
 	_ context.Context,
 	_ *harnessapi.Session,
-	_ harnessapi.Agent,
+	_ Agent,
 	_ string,
 ) (string, error) {
 	f.resolveCalls++
@@ -88,6 +91,15 @@ func (f *fakeAgentRegistrationAPI) ResolveToken(
 		f.resolvedToken = "recovered-agent-token"
 	}
 	return f.resolvedToken, f.resolveErr
+}
+
+func (f *fakeAgentRegistrationAPI) Readiness(
+	_ context.Context,
+	_ *harnessapi.Session,
+	_ Agent,
+) (AgentReadiness, error) {
+	f.readinessCalls++
+	return f.readiness, f.readinessErr
 }
 
 type statusFailureClient struct {
@@ -167,7 +179,7 @@ func TestAgentRegistrationRecoversCommittedCreateAfterStatusFailure(t *testing.T
 		2: errors.New("managed status write failed"),
 	})
 	fixture.agentAPI.commitCreate = true
-	fixture.agentAPI.createResult = harnessapi.CreateAgentResult{
+	fixture.agentAPI.createResult = CreateAgentResult{
 		Identifier:   fixture.agent.Spec.Identifier,
 		InitialToken: "one-time-token",
 	}
@@ -203,8 +215,12 @@ func TestAgentRegistrationRecoversCommittedCreateAfterStatusFailure(t *testing.T
 	if err != nil {
 		t.Fatalf("recover committed create: %v", err)
 	}
-	if !result.IsZero() {
-		t.Fatalf("recovery result = %#v, want zero", result)
+	if result.RequeueAfter != DefaultAgentHealthResyncInterval {
+		t.Fatalf(
+			"recovery requeueAfter = %s, want health resync %s",
+			result.RequeueAfter,
+			DefaultAgentHealthResyncInterval,
+		)
 	}
 	if fixture.agentAPI.createCalls != 1 {
 		t.Fatalf("recovery issued another create: %d calls", fixture.agentAPI.createCalls)
@@ -220,7 +236,7 @@ func TestAgentRegistrationRecoversTimeoutByUIDTag(t *testing.T) {
 	fixture.agentAPI.commitCreate = true
 	fixture.agentAPI.createErr = fmt.Errorf(
 		"%w: connection closed",
-		harnessapi.ErrAgentCreateOutcomeUnknown,
+		ErrAgentCreateOutcomeUnknown,
 	)
 
 	result, err := fixture.reconciler.reconcileReady(
@@ -259,7 +275,7 @@ func TestAgentRegistrationRecoversTimeoutByUIDTag(t *testing.T) {
 
 func TestAgentRegistrationRecoversCreateConflictOnNextLookup(t *testing.T) {
 	fixture := newAgentRegistrationFixture(t, "ACCOUNT", nil)
-	fixture.agentAPI.createErr = harnessapi.ErrAgentAlreadyExists
+	fixture.agentAPI.createErr = ErrAgentAlreadyExists
 
 	result, err := fixture.reconciler.reconcileReady(
 		context.Background(),
@@ -280,7 +296,7 @@ func TestAgentRegistrationRecoversCreateConflictOnNextLookup(t *testing.T) {
 	}
 
 	fixture.agentAPI.createErr = nil
-	fixture.agentAPI.lookupResult = harnessapi.AgentLookupResult{
+	fixture.agentAPI.lookupResult = AgentLookupResult{
 		Exists: true,
 		Agent:  ownedAgentObservation(persisted),
 	}
@@ -313,7 +329,7 @@ func TestAgentRegistrationAcceptsScopedObservedIdentifier(t *testing.T) {
 			fixture := newAgentRegistrationFixture(t, test.scope, nil)
 			observed := ownedAgentObservation(fixture.agent)
 			observed.Identifier = test.prefixed
-			fixture.agentAPI.lookupResult = harnessapi.AgentLookupResult{
+			fixture.agentAPI.lookupResult = AgentLookupResult{
 				Exists: true,
 				Agent:  observed,
 			}
@@ -385,27 +401,27 @@ func TestAgentRegistrationRejectsEmptyKubernetesUID(t *testing.T) {
 func TestAgentRegistrationRejectsWrongOwnershipProof(t *testing.T) {
 	mutations := []struct {
 		name   string
-		mutate func(*harnessapi.Agent)
+		mutate func(*Agent)
 	}{
 		{
 			name: "missing UID tag",
-			mutate: func(agent *harnessapi.Agent) {
+			mutate: func(agent *Agent) {
 				delete(agent.Tags, harnessAgentCRUIDTag)
 			},
 		},
 		{
 			name: "wrong UID tag",
-			mutate: func(agent *harnessapi.Agent) {
+			mutate: func(agent *Agent) {
 				agent.Tags[harnessAgentCRUIDTag] = "another-cr-uid"
 			},
 		},
-		{name: "wrong name", mutate: func(agent *harnessapi.Agent) { agent.Name = "other-name" }},
-		{name: "wrong account", mutate: func(agent *harnessapi.Agent) { agent.AccountIdentifier = "other-account" }},
-		{name: "wrong org", mutate: func(agent *harnessapi.Agent) { agent.OrgIdentifier = "other-org" }},
-		{name: "wrong project", mutate: func(agent *harnessapi.Agent) { agent.ProjectIdentifier = "other-project" }},
-		{name: "wrong scope", mutate: func(agent *harnessapi.Agent) { agent.Scope = "ORG" }},
-		{name: "wrong type", mutate: func(agent *harnessapi.Agent) { agent.Type = "CONNECTED_ARGO_PROVIDER" }},
-		{name: "wrong operator", mutate: func(agent *harnessapi.Agent) { agent.Operator = "FLAMINGO" }},
+		{name: "wrong name", mutate: func(agent *Agent) { agent.Name = "other-name" }},
+		{name: "wrong account", mutate: func(agent *Agent) { agent.AccountIdentifier = "other-account" }},
+		{name: "wrong org", mutate: func(agent *Agent) { agent.OrgIdentifier = "other-org" }},
+		{name: "wrong project", mutate: func(agent *Agent) { agent.ProjectIdentifier = "other-project" }},
+		{name: "wrong scope", mutate: func(agent *Agent) { agent.Scope = "ORG" }},
+		{name: "wrong type", mutate: func(agent *Agent) { agent.Type = "CONNECTED_ARGO_PROVIDER" }},
+		{name: "wrong operator", mutate: func(agent *Agent) { agent.Operator = "FLAMINGO" }},
 	}
 
 	for _, test := range mutations {
@@ -413,7 +429,7 @@ func TestAgentRegistrationRejectsWrongOwnershipProof(t *testing.T) {
 			fixture := newAgentRegistrationFixture(t, "PROJECT", nil)
 			observed := ownedAgentObservation(fixture.agent)
 			test.mutate(&observed)
-			fixture.agentAPI.lookupResult = harnessapi.AgentLookupResult{
+			fixture.agentAPI.lookupResult = AgentLookupResult{
 				Exists: true,
 				Agent:  observed,
 			}
@@ -448,7 +464,7 @@ func TestAgentRegistrationRejectsWrongOwnershipProof(t *testing.T) {
 func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 	tests := []struct {
 		name          string
-		lookup        func(*infrastructurev1.HarnessGitopsAgent) harnessapi.AgentLookupResult
+		lookup        func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult
 		lookupErr     error
 		wantDelete    int
 		wantErr       bool
@@ -456,29 +472,29 @@ func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 	}{
 		{
 			name: "matching tagged Agent is deleted",
-			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) harnessapi.AgentLookupResult {
-				return harnessapi.AgentLookupResult{Exists: true, Agent: ownedAgentObservation(agent)}
+			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+				return AgentLookupResult{Exists: true, Agent: ownedAgentObservation(agent)}
 			},
 			wantDelete: 1,
 		},
 		{
 			name: "absent Agent is not deleted",
-			lookup: func(*infrastructurev1.HarnessGitopsAgent) harnessapi.AgentLookupResult {
-				return harnessapi.AgentLookupResult{}
+			lookup: func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+				return AgentLookupResult{}
 			},
 		},
 		{
 			name: "wrong tag is not deleted",
-			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) harnessapi.AgentLookupResult {
+			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
 				observed := ownedAgentObservation(agent)
 				observed.Tags[harnessAgentCRUIDTag] = "different-uid"
-				return harnessapi.AgentLookupResult{Exists: true, Agent: observed}
+				return AgentLookupResult{Exists: true, Agent: observed}
 			},
 		},
 		{
 			name: "lookup failure retains finalizer",
-			lookup: func(*infrastructurev1.HarnessGitopsAgent) harnessapi.AgentLookupResult {
-				return harnessapi.AgentLookupResult{}
+			lookup: func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+				return AgentLookupResult{}
 			},
 			lookupErr:     errors.New("temporary Harness failure"),
 			wantErr:       true,
@@ -524,7 +540,7 @@ func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 func TestManagedAgentDeletionReverifiesUIDTaggedTuple(t *testing.T) {
 	tests := []struct {
 		name          string
-		mutate        func(*harnessapi.Agent)
+		mutate        func(*Agent)
 		lookupErr     error
 		wantDelete    int
 		wantErr       bool
@@ -536,7 +552,7 @@ func TestManagedAgentDeletionReverifiesUIDTaggedTuple(t *testing.T) {
 		},
 		{
 			name: "replacement without the CR tag is preserved",
-			mutate: func(agent *harnessapi.Agent) {
+			mutate: func(agent *Agent) {
 				delete(agent.Tags, harnessAgentCRUIDTag)
 			},
 		},
@@ -564,7 +580,7 @@ func TestManagedAgentDeletionReverifiesUIDTaggedTuple(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&observed)
 			}
-			fixture.agentAPI.lookupResult = harnessapi.AgentLookupResult{
+			fixture.agentAPI.lookupResult = AgentLookupResult{
 				Exists: true,
 				Agent:  observed,
 			}
@@ -702,7 +718,12 @@ func newAgentRegistrationFixture(
 		failUpdate: statusFailures,
 	}
 	agentAPI := &fakeAgentRegistrationAPI{
-		createResult: harnessapi.CreateAgentResult{Identifier: agent.Spec.Identifier},
+		createResult: CreateAgentResult{Identifier: agent.Spec.Identifier},
+		readiness: AgentReadiness{
+			Exists:  true,
+			Ready:   true,
+			Message: "Harness GitOps agent is Connected and Healthy",
+		},
 	}
 
 	persisted := &infrastructurev1.HarnessGitopsAgent{}
@@ -757,7 +778,7 @@ func registrationTestAgent(scope string) *infrastructurev1.HarnessGitopsAgent {
 
 func ownedAgentObservation(
 	agent *infrastructurev1.HarnessGitopsAgent,
-) harnessapi.Agent {
+) Agent {
 	observed := harnessAgentFor(agent, agent.Spec.Identifier)
 	observed.Tags = map[string]string{
 		harnessAgentCRUIDTag: string(agent.UID),
@@ -790,7 +811,7 @@ func (f *agentRegistrationFixture) assertManagedWithToken(t *testing.T) {
 	if persisted.Status.AgentOwnership != infrastructurev1.OwnershipManaged {
 		t.Fatalf("ownership = %q, want Managed", persisted.Status.AgentOwnership)
 	}
-	if !harnessapi.AgentIdentifiersEquivalent(
+	if !harnessapi.IdentifiersEquivalent(
 		persisted.Spec.Scope,
 		persisted.Status.AgentIdentifier,
 		persisted.Spec.Identifier,

@@ -24,19 +24,22 @@ import (
 	"time"
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 )
 
 const (
 	harnessProjectMappingFinalizer = "infrastructure.kandylis.co.uk/project-mapping-finalizer"
 	projectMappingReadyCondition   = "Ready"
+	harnessAgentHealthyCondition   = "Healthy"
+	harnessAgentReasonAbsent       = "AgentAbsent"
 
 	projectMappingReasonResolutionInvalid  = "ResolutionInvalid"
 	projectMappingReasonAgentRefNotFound   = "AgentRefNotFound"
@@ -69,27 +72,19 @@ type mappingReconcileAPI interface {
 	List(
 		context.Context,
 		*harnessapi.Session,
-		harnessapi.ProjectMappingRequest,
-	) ([]harnessapi.ProjectMapping, error)
+		ProjectMappingRequest,
+	) ([]ProjectMapping, error)
 	Create(
 		context.Context,
 		*harnessapi.Session,
-		harnessapi.ProjectMappingRequest,
-	) (harnessapi.ProjectMapping, error)
+		ProjectMappingRequest,
+	) (ProjectMapping, error)
 	Delete(
 		context.Context,
 		*harnessapi.Session,
-		harnessapi.ProjectMappingRequest,
+		ProjectMappingRequest,
 		string,
 	) error
-}
-
-type mappingAgentReadinessAPI interface {
-	Readiness(
-		context.Context,
-		*harnessapi.Session,
-		harnessapi.Agent,
-	) (harnessapi.AgentReadiness, error)
 }
 
 // Reconciler reconciles one AppProject mapping.
@@ -101,7 +96,6 @@ type Reconciler struct {
 	HarnessMappingResyncInterval   time.Duration
 
 	mappingAPI       mappingReconcileAPI
-	agentAPI         mappingAgentReadinessAPI
 	appProjectClient dynamic.Interface
 }
 
@@ -118,12 +112,13 @@ func (r *Reconciler) Reconcile(
 		return r.finalizeProjectMapping(ctx, mapping)
 	}
 
-	if !controllerutil.ContainsFinalizer(mapping, harnessProjectMappingFinalizer) {
-		controllerutil.AddFinalizer(mapping, harnessProjectMappingFinalizer)
-		if err := r.Update(ctx, mapping); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: immediateRequeueInterval}, nil
+	if result, done, err := resourceutil.EnsureFinalizer(
+		ctx,
+		r.Client,
+		mapping,
+		harnessProjectMappingFinalizer,
+	); done {
+		return result, err
 	}
 
 	agent := &infrastructurev1.HarnessGitopsAgent{}
@@ -192,39 +187,11 @@ func (r *Reconciler) Reconcile(
 		return ctrl.Result{RequeueAfter: r.pendingRetryInterval()}, statusErr
 	}
 
-	session, err := harnessapi.SessionForAgent(
-		ctx,
-		r.apiReader(),
-		r.APIKeySecretNamespace,
-		agent,
-	)
-	if err != nil {
-		return r.returnAPIError(ctx, mapping, "Unable to initialize the Harness session", err)
-	}
-
-	readiness, err := r.agentReadinessAPI().Readiness(
-		ctx,
-		session,
-		mappingHarnessAgent(agent, request),
-	)
-	if err != nil {
-		return r.returnAPIError(ctx, mapping, "Unable to verify the Harness GitOps agent", err)
-	}
-	if !readiness.Exists {
-		statusErr := r.setReady(
-			ctx,
-			mapping,
-			metav1.ConditionFalse,
-			projectMappingReasonAgentNotFound,
-			"Harness GitOps agent does not exist yet",
-			nil,
-		)
-		return ctrl.Result{RequeueAfter: r.pendingRetryInterval()}, statusErr
-	}
-	if !readiness.Ready {
-		message := strings.TrimSpace(readiness.Message)
-		if message == "" {
-			message = "Harness GitOps agent is not Connected and Healthy yet"
+	healthy := apiMeta.FindStatusCondition(agent.Status.Conditions, harnessAgentHealthyCondition)
+	if healthy == nil || healthy.ObservedGeneration != agent.Generation {
+		message := "Harness GitOps agent health has not been reported yet"
+		if healthy != nil {
+			message = "Harness GitOps agent health has not been reported for its current generation"
 		}
 		statusErr := r.setReady(
 			ctx,
@@ -236,6 +203,31 @@ func (r *Reconciler) Reconcile(
 		)
 		return ctrl.Result{RequeueAfter: r.pendingRetryInterval()}, statusErr
 	}
+	if healthy.Status != metav1.ConditionTrue {
+		reason := projectMappingReasonAgentNotHealthy
+		if healthy.Status == metav1.ConditionFalse &&
+			healthy.Reason == harnessAgentReasonAbsent {
+			reason = projectMappingReasonAgentNotFound
+		}
+		message := strings.TrimSpace(healthy.Message)
+		if message == "" {
+			message = "Harness GitOps agent health could not be verified"
+		}
+		statusErr := r.setReady(
+			ctx,
+			mapping,
+			metav1.ConditionFalse,
+			reason,
+			message,
+			nil,
+		)
+		return ctrl.Result{RequeueAfter: r.pendingRetryInterval()}, statusErr
+	}
+
+	session, err := r.sessionForAgent(ctx, agent)
+	if err != nil {
+		return r.returnAPIError(ctx, mapping, "Unable to initialize the Harness session", err)
+	}
 
 	return r.reconcileHarnessMapping(ctx, mapping, session, request)
 }
@@ -244,7 +236,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 	ctx context.Context,
 	mapping *infrastructurev1.HarnessGitopsProjectMapping,
 	session *harnessapi.Session,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 ) (ctrl.Result, error) {
 	startedCreationState := mapping.Status.CreationState
 	mappings, err := r.projectMappingAPI().List(ctx, session, request)
@@ -370,8 +362,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 
 	created, err := r.projectMappingAPI().Create(ctx, session, request)
 	if err != nil {
-		if errors.Is(err, harnessapi.ErrProjectMappingCreateOutcomeUnknown) ||
-			errors.Is(err, harnessapi.ErrProjectMappingAlreadyExists) {
+		if errors.Is(err, ErrProjectMappingCreateOutcomeUnknown) ||
+			errors.Is(err, ErrProjectMappingAlreadyExists) {
 			statusErr := r.setReady(
 				ctx,
 				mapping,
@@ -439,8 +431,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 func (r *Reconciler) reconcileSelectedMapping(
 	ctx context.Context,
 	mapping *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
-	observed harnessapi.ProjectMapping,
+	request ProjectMappingRequest,
+	observed ProjectMapping,
 ) (ctrl.Result, error) {
 	observedID := strings.TrimSpace(observed.Identifier)
 	adoptID := strings.TrimSpace(mapping.Spec.AdoptMappingID)

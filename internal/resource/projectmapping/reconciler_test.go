@@ -36,16 +36,16 @@ const (
 )
 
 type fakeProjectMappingReconcileAPI struct {
-	listResults  [][]harnessapi.ProjectMapping
+	listResults  [][]ProjectMapping
 	listErr      error
 	listCalls    int
-	createResult harnessapi.ProjectMapping
+	createResult ProjectMapping
 	createErr    error
 	createCalls  int
 	deleteErr    error
 	deleteCalls  int
 	deleteIDs    []string
-	requests     []harnessapi.ProjectMappingRequest
+	requests     []ProjectMappingRequest
 	onList       func()
 	onCreate     func()
 }
@@ -53,8 +53,8 @@ type fakeProjectMappingReconcileAPI struct {
 func (f *fakeProjectMappingReconcileAPI) List(
 	_ context.Context,
 	_ *harnessapi.Session,
-	request harnessapi.ProjectMappingRequest,
-) ([]harnessapi.ProjectMapping, error) {
+	request ProjectMappingRequest,
+) ([]ProjectMapping, error) {
 	f.requests = append(f.requests, request)
 	f.listCalls++
 	if f.onList != nil {
@@ -70,14 +70,14 @@ func (f *fakeProjectMappingReconcileAPI) List(
 	if index >= len(f.listResults) {
 		index = len(f.listResults) - 1
 	}
-	return append([]harnessapi.ProjectMapping(nil), f.listResults[index]...), nil
+	return append([]ProjectMapping(nil), f.listResults[index]...), nil
 }
 
 func (f *fakeProjectMappingReconcileAPI) Create(
 	_ context.Context,
 	_ *harnessapi.Session,
-	request harnessapi.ProjectMappingRequest,
-) (harnessapi.ProjectMapping, error) {
+	request ProjectMappingRequest,
+) (ProjectMapping, error) {
 	f.requests = append(f.requests, request)
 	f.createCalls++
 	if f.onCreate != nil {
@@ -89,7 +89,7 @@ func (f *fakeProjectMappingReconcileAPI) Create(
 func (f *fakeProjectMappingReconcileAPI) Delete(
 	_ context.Context,
 	_ *harnessapi.Session,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 ) error {
 	f.requests = append(f.requests, request)
@@ -98,27 +98,9 @@ func (f *fakeProjectMappingReconcileAPI) Delete(
 	return f.deleteErr
 }
 
-type fakeMappingAgentReadinessAPI struct {
-	readiness harnessapi.AgentReadiness
-	err       error
-	calls     int
-	agents    []harnessapi.Agent
-}
-
-func (f *fakeMappingAgentReadinessAPI) Readiness(
-	_ context.Context,
-	_ *harnessapi.Session,
-	agent harnessapi.Agent,
-) (harnessapi.AgentReadiness, error) {
-	f.calls++
-	f.agents = append(f.agents, agent)
-	return f.readiness, f.err
-}
-
 type mappingReconcilerFixture struct {
 	reconciler    *Reconciler
 	mappingAPI    *fakeProjectMappingReconcileAPI
-	readinessAPI  *fakeMappingAgentReadinessAPI
 	key           client.ObjectKey
 	statusUpdates *int
 	statusFailAt  *int
@@ -130,17 +112,17 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 		scope          string
 		configureAgent func(*infrastructurev1.HarnessGitopsAgent)
 		configureMap   func(*infrastructurev1.HarnessGitopsProjectMapping)
-		wantAgent      harnessapi.Scope
-		wantTarget     harnessapi.Scope
+		wantAgent      Scope
+		wantTarget     Scope
 		returnedAgent  string
 	}{
 		{
 			scope: agentScopeProject,
-			wantAgent: harnessapi.Scope{
+			wantAgent: Scope{
 				OrgIdentifier:     mappingControllerAgentOrgID,
 				ProjectIdentifier: mappingControllerAgentProject,
 			},
-			wantTarget: harnessapi.Scope{
+			wantTarget: Scope{
 				OrgIdentifier:     mappingControllerAgentOrgID,
 				ProjectIdentifier: mappingControllerAgentProject,
 			},
@@ -151,10 +133,10 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 			configureMap: func(mapping *infrastructurev1.HarnessGitopsProjectMapping) {
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 			},
-			wantAgent: harnessapi.Scope{
+			wantAgent: Scope{
 				OrgIdentifier: mappingControllerAgentOrgID,
 			},
-			wantTarget: harnessapi.Scope{
+			wantTarget: Scope{
 				OrgIdentifier:     mappingControllerAgentOrgID,
 				ProjectIdentifier: mappingControllerTargetProject,
 			},
@@ -172,8 +154,8 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 				mapping.Spec.AutoCreateServiceEnv = true
 			},
-			wantAgent: harnessapi.Scope{},
-			wantTarget: harnessapi.Scope{
+			wantAgent: Scope{},
+			wantTarget: Scope{
 				OrgIdentifier:     mappingControllerTargetOrgID,
 				ProjectIdentifier: mappingControllerTargetProject,
 			},
@@ -196,7 +178,7 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 			request := resolvedRequestForTest(t, agent, mapping)
 			created := exactMappingForRequest(request, "created-mapping-id", test.returnedAgent)
 			fixture.mappingAPI.createResult = created
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{
 				nil,
 				{created},
 			}
@@ -277,11 +259,6 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 				t.Fatalf("ownership = %q, want Managed", current.Status.Remote.Ownership)
 			}
 			assertReadyCondition(t, current, metav1.ConditionTrue, projectMappingReasonMappingVerified)
-
-			if got := fixture.readinessAPI.agents[0]; got.OrgIdentifier != test.wantAgent.OrgIdentifier ||
-				got.ProjectIdentifier != test.wantAgent.ProjectIdentifier {
-				t.Fatalf("readiness agent scope = %#v, want %#v", got, test.wantAgent)
-			}
 		})
 	}
 }
@@ -326,7 +303,7 @@ func TestProjectMappingPreexistingAndAdoptionOwnership(t *testing.T) {
 			mapping.Spec.AdoptMappingID = test.adoptID
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
 			request := resolvedRequestForTest(t, agent, mapping)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(request, "existing-mapping", "account."+mappingControllerAgentID),
 			}}
 
@@ -377,12 +354,12 @@ func TestProjectMappingAdoptOnlyNeverCreates(t *testing.T) {
 func TestOwnedProjectMappingAdoptionCannotTransferOwnership(t *testing.T) {
 	tests := []struct {
 		name     string
-		liveRows func(harnessapi.ProjectMappingRequest) []harnessapi.ProjectMapping
+		liveRows func(ProjectMappingRequest) []ProjectMapping
 	}{
 		{
 			name: "owned A and adopt target B both exist",
-			liveRows: func(request harnessapi.ProjectMappingRequest) []harnessapi.ProjectMapping {
-				return []harnessapi.ProjectMapping{
+			liveRows: func(request ProjectMappingRequest) []ProjectMapping {
+				return []ProjectMapping{
 					exactMappingForRequest(request, mappingSelectionID, "account."+mappingControllerAgentID),
 					exactMappingForRequest(request, "mapping-b", "account."+mappingControllerAgentID),
 				}
@@ -390,8 +367,8 @@ func TestOwnedProjectMappingAdoptionCannotTransferOwnership(t *testing.T) {
 		},
 		{
 			name: "only owned A exists",
-			liveRows: func(request harnessapi.ProjectMappingRequest) []harnessapi.ProjectMapping {
-				return []harnessapi.ProjectMapping{
+			liveRows: func(request ProjectMappingRequest) []ProjectMapping {
+				return []ProjectMapping{
 					exactMappingForRequest(request, mappingSelectionID, "account."+mappingControllerAgentID),
 				}
 			},
@@ -414,7 +391,7 @@ func TestOwnedProjectMappingAdoptionCannotTransferOwnership(t *testing.T) {
 			}
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{rows}
+			fixture.mappingAPI.listResults = [][]ProjectMapping{rows}
 			if _, err := fixture.reconcile(t); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
@@ -444,7 +421,7 @@ func TestWrongAdoptionPreservesOutcomeUnknownCandidate(t *testing.T) {
 	mapping.Status.Remote = remoteStatusForRequest(request)
 	mapping.Status.Remote.MappingID = mappingSelectionID
 	wantRemote := mapping.Status.Remote.DeepCopy()
-	rows := []harnessapi.ProjectMapping{
+	rows := []ProjectMapping{
 		exactMappingForRequest(request, mappingSelectionID, "account."+mappingControllerAgentID),
 		exactMappingForRequest(request, "mapping-b", "account."+mappingControllerAgentID),
 	}
@@ -455,7 +432,7 @@ func TestWrongAdoptionPreservesOutcomeUnknownCandidate(t *testing.T) {
 	}
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{rows}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{rows}
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -490,7 +467,7 @@ func TestProjectMappingTupleMismatchPreservesOwnedCleanupSnapshot(t *testing.T) 
 	mismatch.AutoCreateServiceEnv = !request.AutoCreateServiceEnv
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{mismatch}}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{mismatch}}
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -536,7 +513,7 @@ func TestProjectMappingExactReplacementDoesNotHideOwnedTupleMismatch(t *testing.
 			)
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				driftedOwned,
 				exactReplacement,
 			}}
@@ -588,7 +565,7 @@ func TestProjectMappingSameIDPreservesEstablishedOwnership(t *testing.T) {
 			)
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{observed}}
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{observed}}
 			if _, err := fixture.reconcile(t); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
@@ -624,7 +601,7 @@ func TestProjectMappingPendingRestartNeverCreates(t *testing.T) {
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
 	discovered := exactMappingForRequest(request, "candidate-mapping", "account."+mappingControllerAgentID)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{discovered}}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{discovered}}
 
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -653,7 +630,7 @@ func TestProjectMappingConfirmedCreateOutcomeUnknownDoesNotRetry(t *testing.T) {
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
 	fixture.mappingAPI.createErr = fmt.Errorf(
 		"%w: timeout",
-		harnessapi.ErrProjectMappingCreateOutcomeUnknown,
+		ErrProjectMappingCreateOutcomeUnknown,
 	)
 
 	if _, err := fixture.reconcile(t); err != nil {
@@ -686,7 +663,7 @@ func TestProjectMappingExternalRecreationDemotesOwnership(t *testing.T) {
 			mapping.Status.Remote.Ownership = ownership
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(request, "new-external-id", "account."+mappingControllerAgentID),
 			}}
 
@@ -716,7 +693,7 @@ func TestProjectMappingAutoCreateMismatchBlocksCreate(t *testing.T) {
 	mismatch.AutoCreateServiceEnv = false
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{mismatch}}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{mismatch}}
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -734,17 +711,17 @@ func TestProjectMappingAutoCreateMismatchBlocksCreate(t *testing.T) {
 func TestProjectMappingAdoptionRequiresIDAndCompleteTuple(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*harnessapi.ProjectMapping)
+		mutate func(*ProjectMapping)
 	}{
 		{
 			name: "wrong project",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.ProjectIdentifier = "different-target-project"
 			},
 		},
 		{
 			name: "wrong auto-create option",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.AutoCreateServiceEnv = !mapping.AutoCreateServiceEnv
 			},
 		},
@@ -762,7 +739,7 @@ func TestProjectMappingAdoptionRequiresIDAndCompleteTuple(t *testing.T) {
 			test.mutate(&observed)
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{observed}}
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{observed}}
 			if _, err := fixture.reconcile(t); err != nil {
 				t.Fatalf("reconcile: %v", err)
 			}
@@ -797,7 +774,7 @@ func TestProjectMappingDuplicateExactRowsRequireAnID(t *testing.T) {
 	request := resolvedRequestForTest(t, agent, mapping)
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{
 		exactMappingForRequest(request, "duplicate-a", "account."+mappingControllerAgentID),
 		exactMappingForRequest(request, "duplicate-b", "account."+mappingControllerAgentID),
 	}}
@@ -823,7 +800,7 @@ func TestProjectMappingDuplicateFailurePreservesOwnedCleanupSnapshot(t *testing.
 	wantRemote := mapping.Status.Remote.DeepCopy()
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{
 		exactMappingForRequest(request, "replacement-a", "account."+mappingControllerAgentID),
 		exactMappingForRequest(request, "replacement-b", "account."+mappingControllerAgentID),
 	}}
@@ -861,7 +838,7 @@ func TestProjectMappingWaitsForAppProjectAndAgentHealth(t *testing.T) {
 		if result.RequeueAfter != time.Second {
 			t.Fatalf("requeueAfter = %s, want 1s", result.RequeueAfter)
 		}
-		if fixture.readinessAPI.calls != 0 || fixture.mappingAPI.listCalls != 0 {
+		if fixture.mappingAPI.listCalls != 0 {
 			t.Fatal("Harness was contacted before AppProject existed")
 		}
 		assertReadyCondition(
@@ -874,14 +851,16 @@ func TestProjectMappingWaitsForAppProjectAndAgentHealth(t *testing.T) {
 
 	t.Run("health", func(t *testing.T) {
 		agent := newMappingControllerAgent(agentScopeProject)
+		apiMeta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+			Type:               harnessAgentHealthyCondition,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: agent.Generation,
+			Reason:             "AgentUnhealthy",
+			Message:            "agent is Disconnected",
+		})
 		mapping := newMappingControllerResource()
 		mapping.Finalizers = []string{harnessProjectMappingFinalizer}
 		fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-		fixture.readinessAPI.readiness = harnessapi.AgentReadiness{
-			Exists:  true,
-			Ready:   false,
-			Message: "agent is Disconnected",
-		}
 
 		result, err := fixture.reconcile(t)
 		if err != nil {
@@ -892,6 +871,31 @@ func TestProjectMappingWaitsForAppProjectAndAgentHealth(t *testing.T) {
 		}
 		if fixture.mappingAPI.listCalls != 0 {
 			t.Fatal("mappings were listed before the Agent became healthy")
+		}
+		assertReadyCondition(
+			t,
+			fixture.getMapping(t),
+			metav1.ConditionFalse,
+			projectMappingReasonAgentNotHealthy,
+		)
+	})
+
+	t.Run("health not yet published", func(t *testing.T) {
+		agent := newMappingControllerAgent(agentScopeProject)
+		agent.Status.Conditions = nil
+		mapping := newMappingControllerResource()
+		mapping.Finalizers = []string{harnessProjectMappingFinalizer}
+		fixture := newMappingReconcilerFixture(t, agent, mapping, true)
+
+		result, err := fixture.reconcile(t)
+		if err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		if result.RequeueAfter != time.Second {
+			t.Fatalf("requeueAfter = %s, want 1s", result.RequeueAfter)
+		}
+		if fixture.mappingAPI.listCalls != 0 {
+			t.Fatal("mappings were listed before Agent health was published")
 		}
 		assertReadyCondition(
 			t,
@@ -922,7 +926,7 @@ func TestProjectMappingReadyStatusUpdateIsNoOpAware(t *testing.T) {
 	})
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{observed}}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{observed}}
 	before := *fixture.statusUpdates
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -985,7 +989,7 @@ func TestProjectMappingCreateRequiresDurableStatusWrites(t *testing.T) {
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, true)
 		fixture.mappingAPI.createResult = created
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{
 			nil,
 			{created},
 		}
@@ -1087,24 +1091,16 @@ func newMappingReconcilerFixture(
 		Build()
 
 	mappingAPI := &fakeProjectMappingReconcileAPI{}
-	readinessAPI := &fakeMappingAgentReadinessAPI{
-		readiness: harnessapi.AgentReadiness{
-			Exists: true,
-			Ready:  true,
-		},
-	}
 	reconciler := &Reconciler{
 		Client:                         k8sClient,
 		APIReader:                      k8sClient,
 		AppProjectPendingRetryInterval: time.Second,
 		HarnessMappingResyncInterval:   2 * time.Second,
 		mappingAPI:                     mappingAPI,
-		agentAPI:                       readinessAPI,
 	}
 	return &mappingReconcilerFixture{
 		reconciler:    reconciler,
 		mappingAPI:    mappingAPI,
-		readinessAPI:  readinessAPI,
 		key:           client.ObjectKeyFromObject(mapping),
 		statusUpdates: &statusUpdates,
 		statusFailAt:  &statusFailAt,
@@ -1147,10 +1143,11 @@ func (f *mappingReconcilerFixture) getMappingOrNil(
 }
 
 func newMappingControllerAgent(scope string) *infrastructurev1.HarnessGitopsAgent {
-	return &infrastructurev1.HarnessGitopsAgent{
+	agent := &infrastructurev1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mappingControllerAgentName,
-			Namespace: mappingControllerNamespace,
+			Name:       mappingControllerAgentName,
+			Namespace:  mappingControllerNamespace,
+			Generation: 3,
 		},
 		Spec: infrastructurev1.HarnessGitopsAgentSpec{
 			Name:            "Mapping Agent",
@@ -1168,6 +1165,14 @@ func newMappingControllerAgent(scope string) *infrastructurev1.HarnessGitopsAgen
 			AgentOwnership:  infrastructurev1.OwnershipManaged,
 		},
 	}
+	apiMeta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+		Type:               harnessAgentHealthyCondition,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: agent.Generation,
+		Reason:             "AgentHealthy",
+		Message:            "Harness GitOps agent is Connected and Healthy",
+	})
+	return agent
 }
 
 func newMappingControllerResource() *infrastructurev1.HarnessGitopsProjectMapping {
@@ -1191,7 +1196,7 @@ func newAccountMappingControllerTest(
 ) (
 	*infrastructurev1.HarnessGitopsAgent,
 	*infrastructurev1.HarnessGitopsProjectMapping,
-	harnessapi.ProjectMappingRequest,
+	ProjectMappingRequest,
 ) {
 	t.Helper()
 	agent := newMappingControllerAgent(agentScopeAccount)
@@ -1206,7 +1211,7 @@ func resolvedRequestForTest(
 	t *testing.T,
 	agent *infrastructurev1.HarnessGitopsAgent,
 	mapping *infrastructurev1.HarnessGitopsProjectMapping,
-) harnessapi.ProjectMappingRequest {
+) ProjectMappingRequest {
 	t.Helper()
 	request, err := resolveProjectMappingRequest(agent, mapping)
 	if err != nil {
@@ -1216,11 +1221,11 @@ func resolvedRequestForTest(
 }
 
 func exactMappingForRequest(
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	id string,
 	agentID string,
-) harnessapi.ProjectMapping {
-	return harnessapi.ProjectMapping{
+) ProjectMapping {
+	return ProjectMapping{
 		Identifier:           id,
 		AgentIdentifier:      agentID,
 		AccountIdentifier:    request.AccountIdentifier,

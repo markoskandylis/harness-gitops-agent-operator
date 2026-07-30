@@ -21,30 +21,38 @@ type createConflictAgentAPI struct{}
 func (createConflictAgentAPI) Create(
 	context.Context,
 	*harnessapi.Session,
-	harnessapi.CreateAgentRequest,
-) (harnessapi.CreateAgentResult, error) {
-	return harnessapi.CreateAgentResult{}, harnessapi.ErrAgentAlreadyExists
+	CreateAgentRequest,
+) (CreateAgentResult, error) {
+	return CreateAgentResult{}, ErrAgentAlreadyExists
 }
 
 func (createConflictAgentAPI) Lookup(
 	context.Context,
 	*harnessapi.Session,
-	harnessapi.Agent,
-) (harnessapi.AgentLookupResult, error) {
-	return harnessapi.AgentLookupResult{}, nil
+	Agent,
+) (AgentLookupResult, error) {
+	return AgentLookupResult{}, nil
 }
 
-func (createConflictAgentAPI) Delete(context.Context, *harnessapi.Session, harnessapi.Agent) error {
+func (createConflictAgentAPI) Delete(context.Context, *harnessapi.Session, Agent) error {
 	return nil
 }
 
 func (createConflictAgentAPI) ResolveToken(
 	context.Context,
 	*harnessapi.Session,
-	harnessapi.Agent,
+	Agent,
 	string,
 ) (string, error) {
 	return "", nil
+}
+
+func (createConflictAgentAPI) Readiness(
+	context.Context,
+	*harnessapi.Session,
+	Agent,
+) (AgentReadiness, error) {
+	return AgentReadiness{}, nil
 }
 
 func TestCreateHarnessAgentRequiresExplicitAdoption(t *testing.T) {

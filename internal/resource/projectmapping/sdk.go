@@ -1,12 +1,16 @@
-package harness
+package projectmapping
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/antihax/optional"
 	"github.com/harness/harness-go-sdk/harness/nextgen"
+
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 var (
@@ -49,24 +53,24 @@ type SDKProjectMappingAPI struct{}
 
 func (SDKProjectMappingAPI) List(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	request ProjectMappingRequest,
 ) ([]ProjectMapping, error) {
-	candidates := ScopedPathAgentIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("list AppProject mappings: empty agent identifier")
 	}
 
 	var lastErr error
 	for _, candidate := range candidates {
-		response, httpResponse, err := session.client.ProjectMappingsApi.
+		response, httpResponse, err := session.Client().ProjectMappingsApi.
 			AppProjectMappingServiceGetAppProjectMappingsListByAgentV2(
-				session.authContext(ctx),
+				session.AuthContext(ctx),
 				candidate,
 				&nextgen.ProjectMappingsApiAppProjectMappingServiceGetAppProjectMappingsListByAgentV2Opts{
 					AccountIdentifier: optional.NewString(request.AccountIdentifier),
-					OrgIdentifier:     optionalString(request.Agent.OrgIdentifier),
-					ProjectIdentifier: optionalString(request.Agent.ProjectIdentifier),
+					OrgIdentifier:     harnessapi.OptionalString(request.Agent.OrgIdentifier),
+					ProjectIdentifier: harnessapi.OptionalString(request.Agent.ProjectIdentifier),
 					ArgoProjectName:   optional.NewString(request.ArgoProjectName),
 				},
 			)
@@ -77,8 +81,8 @@ func (SDKProjectMappingAPI) List(
 			}
 			return mappings, nil
 		}
-		lastErr = safeAPIError("list AppProject mappings", candidate, httpResponse, err)
-		if !isNotFound(httpResponse, err) {
+		lastErr = mappingAPIError("list AppProject mappings", candidate, httpResponse, err)
+		if harnessapi.ClassifyResponse(httpResponse, err) != harnessapi.VerdictAbsent {
 			return nil, lastErr
 		}
 	}
@@ -87,18 +91,18 @@ func (SDKProjectMappingAPI) List(
 
 func (SDKProjectMappingAPI) Create(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	request ProjectMappingRequest,
 ) (ProjectMapping, error) {
-	candidates := ScopedPathAgentIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
 	if len(candidates) == 0 {
 		return ProjectMapping{}, fmt.Errorf("create AppProject mapping: empty agent identifier")
 	}
 
 	var lastErr error
 	for _, candidate := range candidates {
-		response, httpResponse, err := session.client.ProjectMappingsApi.AppProjectMappingServiceCreateV2(
-			session.authContext(ctx),
+		response, httpResponse, err := session.Client().ProjectMappingsApi.AppProjectMappingServiceCreateV2(
+			session.AuthContext(ctx),
 			nextgen.V1AppProjectMappingCreateRequestV2{
 				AgentIdentifier:      candidate,
 				AccountIdentifier:    request.AccountIdentifier,
@@ -122,14 +126,14 @@ func (SDKProjectMappingAPI) Create(
 			}
 			return mapping, nil
 		}
-		if isMappingAlreadyExists(httpResponse, err) {
+		if isProjectMappingConflict(httpResponse, err) {
 			return ProjectMapping{}, ErrProjectMappingAlreadyExists
 		}
-		if isAmbiguousCreateResponse(httpResponse) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictTransient {
 			return ProjectMapping{}, fmt.Errorf("%w: %w", ErrProjectMappingCreateOutcomeUnknown, err)
 		}
-		lastErr = safeAPIError("create AppProject mapping", candidate, httpResponse, err)
-		if !isNotFound(httpResponse, err) {
+		lastErr = mappingAPIError("create AppProject mapping", candidate, httpResponse, err)
+		if harnessapi.ClassifyResponse(httpResponse, err) != harnessapi.VerdictAbsent {
 			return ProjectMapping{}, lastErr
 		}
 	}
@@ -138,35 +142,54 @@ func (SDKProjectMappingAPI) Create(
 
 func (SDKProjectMappingAPI) Delete(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	request ProjectMappingRequest,
 	mappingID string,
 ) error {
-	candidates := ScopedPathAgentIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(request.AgentScope, request.AgentIdentifier)
 	if len(candidates) == 0 {
 		return fmt.Errorf("delete AppProject mapping: empty agent identifier")
 	}
 
 	for _, candidate := range candidates {
-		_, httpResponse, err := session.client.ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
-			session.authContext(ctx),
+		_, httpResponse, err := session.Client().ProjectMappingsApi.AppProjectMappingServiceDeleteV2(
+			session.AuthContext(ctx),
 			candidate,
 			mappingID,
 			&nextgen.ProjectMappingsApiAppProjectMappingServiceDeleteV2Opts{
 				AccountIdentifier: optional.NewString(request.AccountIdentifier),
-				OrgIdentifier:     optionalString(request.Mapping.OrgIdentifier),
-				ProjectIdentifier: optionalString(request.Mapping.ProjectIdentifier),
+				OrgIdentifier:     harnessapi.OptionalString(request.Mapping.OrgIdentifier),
+				ProjectIdentifier: harnessapi.OptionalString(request.Mapping.ProjectIdentifier),
 			},
 		)
 		if err == nil {
 			return nil
 		}
-		if isNotFound(httpResponse, err) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictAbsent {
 			continue
 		}
-		return safeAPIError("delete AppProject mapping", candidate, httpResponse, err)
+		return mappingAPIError("delete AppProject mapping", candidate, httpResponse, err)
 	}
 	return nil
+}
+
+func isProjectMappingConflict(response *http.Response, err error) bool {
+	return harnessapi.ClassifyResponse(response, err) == harnessapi.VerdictConflict ||
+		strings.Contains(strings.ToLower(harnessapi.ErrorBody(err)), "already exists")
+}
+
+func mappingAPIError(
+	operation string,
+	agentIdentifier string,
+	response *http.Response,
+	err error,
+) error {
+	return harnessapi.APIError(
+		operation,
+		fmt.Sprintf("agentIdentifier=%q", agentIdentifier),
+		response,
+		err,
+	)
 }
 
 func projectMappingFromSDK(mapping nextgen.V1AppProjectMappingV2) ProjectMapping {

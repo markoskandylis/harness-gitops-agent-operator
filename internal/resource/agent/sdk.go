@@ -1,13 +1,16 @@
-package harness
+package agent
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/antihax/optional"
 	"github.com/harness/harness-go-sdk/harness/nextgen"
+
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 var (
@@ -60,21 +63,21 @@ type SDKAgentAPI struct{}
 
 func (SDKAgentAPI) Create(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	request CreateAgentRequest,
 ) (CreateAgentResult, error) {
 	agentType := nextgen.V1AgentType(request.Type)
 	agentScope := nextgen.V1AgentScope(request.Scope)
 	agentOperator := nextgen.V1AgentOperator(request.Operator)
-	response, httpResponse, err := session.client.AgentApi.AgentServiceForServerCreate(
-		session.authContext(ctx),
+	response, httpResponse, err := session.Client().AgentApi.AgentServiceForServerCreate(
+		session.AuthContext(ctx),
 		nextgen.V1Agent{
 			Name:              request.Name,
 			Identifier:        request.Identifier,
 			Operator:          &agentOperator,
 			AccountIdentifier: request.AccountIdentifier,
-			OrgIdentifier:     OrgIdentifierForAgentScope(request.Scope, request.OrgIdentifier),
-			ProjectIdentifier: ProjectIdentifierForAgentScope(request.Scope, request.ProjectIdentifier),
+			OrgIdentifier:     harnessapi.OrgIdentifierForScope(request.Scope, request.OrgIdentifier),
+			ProjectIdentifier: harnessapi.ProjectIdentifierForScope(request.Scope, request.ProjectIdentifier),
 			Scope:             &agentScope,
 			Type_:             &agentType,
 			Tags:              cloneTags(request.Tags),
@@ -88,10 +91,10 @@ func (SDKAgentAPI) Create(
 		if isAgentAlreadyExists(httpResponse, err) {
 			return CreateAgentResult{}, fmt.Errorf("%w: %q", ErrAgentAlreadyExists, strings.TrimSpace(request.Identifier))
 		}
-		if isAmbiguousCreateResponse(httpResponse) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictTransient {
 			return CreateAgentResult{}, fmt.Errorf("%w: %w", ErrAgentCreateOutcomeUnknown, err)
 		}
-		return CreateAgentResult{}, safeAPIError(
+		return CreateAgentResult{}, agentAPIError(
 			"create GitOps agent",
 			request.Identifier,
 			httpResponse,
@@ -121,23 +124,23 @@ func (SDKAgentAPI) Create(
 // is attempted only after a canonical candidate returns 404.
 func (SDKAgentAPI) Lookup(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	agent Agent,
 ) (AgentLookupResult, error) {
-	candidates := ScopedPathAgentIdentifierCandidates(agent.Scope, agent.Identifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(agent.Scope, agent.Identifier)
 	if len(candidates) == 0 {
 		return AgentLookupResult{}, fmt.Errorf("get GitOps agent: empty agent identifier")
 	}
 
 	for _, candidate := range candidates {
-		response, httpResponse, err := session.client.AgentApi.AgentServiceForServerGet(
-			session.authContext(ctx),
+		response, httpResponse, err := session.Client().AgentApi.AgentServiceForServerGet(
+			session.AuthContext(ctx),
 			candidate,
 			strings.TrimSpace(agent.AccountIdentifier),
 			&nextgen.AgentsApiAgentServiceForServerGetOpts{
-				OrgIdentifier:     optionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
-				ProjectIdentifier: optionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
-				Scope:             optionalString(agent.Scope),
+				OrgIdentifier:     harnessapi.OptionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
+				ProjectIdentifier: harnessapi.OptionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
+				Scope:             harnessapi.OptionalString(agent.Scope),
 				WithCredentials:   optional.NewBool(false),
 			},
 		)
@@ -147,10 +150,10 @@ func (SDKAgentAPI) Lookup(
 				Agent:  agentFromSDK(response),
 			}, nil
 		}
-		if isNotFound(httpResponse, err) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictAbsent {
 			continue
 		}
-		return AgentLookupResult{}, safeAPIError(
+		return AgentLookupResult{}, agentAPIError(
 			"get GitOps agent",
 			candidate,
 			httpResponse,
@@ -162,41 +165,41 @@ func (SDKAgentAPI) Lookup(
 
 func (SDKAgentAPI) Delete(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	agent Agent,
 ) error {
-	candidates := ScopedPathAgentIdentifierCandidates(agent.Scope, agent.Identifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(agent.Scope, agent.Identifier)
 	if len(candidates) == 0 {
 		return fmt.Errorf("delete GitOps agent: empty agent identifier")
 	}
 
 	for _, candidate := range candidates {
-		_, httpResponse, err := session.client.AgentApi.AgentServiceForServerDelete(
-			session.authContext(ctx),
+		_, httpResponse, err := session.Client().AgentApi.AgentServiceForServerDelete(
+			session.AuthContext(ctx),
 			candidate,
 			&nextgen.AgentsApiAgentServiceForServerDeleteOpts{
 				AccountIdentifier: optional.NewString(agent.AccountIdentifier),
-				OrgIdentifier:     optionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
-				ProjectIdentifier: optionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
-				Name:              optionalString(agent.Name),
-				Type_:             optionalString(agent.Type),
-				Scope:             optionalString(agent.Scope),
+				OrgIdentifier:     harnessapi.OptionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
+				ProjectIdentifier: harnessapi.OptionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
+				Name:              harnessapi.OptionalString(agent.Name),
+				Type_:             harnessapi.OptionalString(agent.Type),
+				Scope:             harnessapi.OptionalString(agent.Scope),
 			},
 		)
 		if err == nil {
 			return nil
 		}
-		if isNotFound(httpResponse, err) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictAbsent {
 			continue
 		}
-		return safeAPIError("delete GitOps agent", candidate, httpResponse, err)
+		return agentAPIError("delete GitOps agent", candidate, httpResponse, err)
 	}
 	return fmt.Errorf("%w: %s", ErrAgentNotFound, strings.TrimSpace(agent.Identifier))
 }
 
 func (SDKAgentAPI) ResolveToken(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	agent Agent,
 	initialToken string,
 ) (string, error) {
@@ -206,7 +209,7 @@ func (SDKAgentAPI) ResolveToken(
 		return initialToken, nil
 	}
 
-	candidates := ScopedPathAgentIdentifierCandidates(agent.Scope, agent.Identifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(agent.Scope, agent.Identifier)
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("get GitOps agent credentials: empty agent identifier")
 	}
@@ -214,14 +217,14 @@ func (SDKAgentAPI) ResolveToken(
 	var response nextgen.V1Agent
 	successfulIdentifier := ""
 	for _, candidate := range candidates {
-		observed, httpResponse, err := session.client.AgentApi.AgentServiceForServerGet(
-			session.authContext(ctx),
+		observed, httpResponse, err := session.Client().AgentApi.AgentServiceForServerGet(
+			session.AuthContext(ctx),
 			candidate,
 			agent.AccountIdentifier,
 			&nextgen.AgentsApiAgentServiceForServerGetOpts{
-				OrgIdentifier:     optionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
-				ProjectIdentifier: optionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
-				Scope:             optionalString(agent.Scope),
+				OrgIdentifier:     harnessapi.OptionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
+				ProjectIdentifier: harnessapi.OptionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
+				Scope:             harnessapi.OptionalString(agent.Scope),
 				WithCredentials:   optional.NewBool(true),
 			},
 		)
@@ -230,10 +233,10 @@ func (SDKAgentAPI) ResolveToken(
 			successfulIdentifier = candidate
 			break
 		}
-		if isNotFound(httpResponse, err) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictAbsent {
 			continue
 		}
-		return "", safeAPIError("get GitOps agent credentials", candidate, httpResponse, err)
+		return "", agentAPIError("get GitOps agent credentials", candidate, httpResponse, err)
 	}
 	if successfulIdentifier == "" {
 		return "", fmt.Errorf("%w: %s", ErrAgentNotFound, strings.TrimSpace(agent.Identifier))
@@ -242,13 +245,15 @@ func (SDKAgentAPI) ResolveToken(
 		return response.Credentials.PrivateKey, nil
 	}
 
-	regenerated, _, err := session.client.AgentApi.AgentServiceForServerRegenerateCredentials(
-		session.authContext(ctx),
+	regenerated, httpResponse, err := session.Client().AgentApi.AgentServiceForServerRegenerateCredentials(
+		session.AuthContext(ctx),
 		successfulIdentifier,
 	)
 	if err != nil {
-		return "", WrapAPIError(
-			fmt.Sprintf("regenerate credentials for agent %q failed", agent.Identifier),
+		return "", agentAPIError(
+			"regenerate credentials for GitOps agent",
+			successfulIdentifier,
+			httpResponse,
 			err,
 		)
 	}
@@ -260,33 +265,33 @@ func (SDKAgentAPI) ResolveToken(
 
 func (SDKAgentAPI) Readiness(
 	ctx context.Context,
-	session *Session,
+	session *harnessapi.Session,
 	agent Agent,
 ) (AgentReadiness, error) {
-	candidates := ScopedPathAgentIdentifierCandidates(agent.Scope, agent.Identifier)
+	candidates := harnessapi.ScopedIdentifierCandidates(agent.Scope, agent.Identifier)
 	if len(candidates) == 0 {
 		return AgentReadiness{}, fmt.Errorf("get GitOps agent: empty agent identifier")
 	}
 
 	for _, candidate := range candidates {
-		response, httpResponse, err := session.client.AgentApi.AgentServiceForServerGet(
-			session.authContext(ctx),
+		response, httpResponse, err := session.Client().AgentApi.AgentServiceForServerGet(
+			session.AuthContext(ctx),
 			candidate,
 			agent.AccountIdentifier,
 			&nextgen.AgentsApiAgentServiceForServerGetOpts{
-				OrgIdentifier:     optionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
-				ProjectIdentifier: optionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
-				Scope:             optionalString(agent.Scope),
+				OrgIdentifier:     harnessapi.OptionalOrgIdentifier(agent.Scope, agent.OrgIdentifier),
+				ProjectIdentifier: harnessapi.OptionalProjectIdentifier(agent.Scope, agent.ProjectIdentifier),
+				Scope:             harnessapi.OptionalString(agent.Scope),
 				WithCredentials:   optional.NewBool(false),
 			},
 		)
 		if err == nil {
 			return readinessFromAgent(response), nil
 		}
-		if isNotFound(httpResponse, err) {
+		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictAbsent {
 			continue
 		}
-		return AgentReadiness{}, safeAPIError("get GitOps agent", candidate, httpResponse, err)
+		return AgentReadiness{}, agentAPIError("get GitOps agent", candidate, httpResponse, err)
 	}
 	return AgentReadiness{}, nil
 }
@@ -323,40 +328,26 @@ func cloneTags(tags map[string]string) map[string]string {
 	return cloned
 }
 
-func readinessFromAgent(agent nextgen.V1Agent) AgentReadiness {
-	readiness := AgentReadiness{Exists: true}
-	if agent.Health == nil {
-		readiness.Message = "Harness GitOps agent health has not been reported yet"
-		return readiness
-	}
+func isAgentAlreadyExists(response *http.Response, err error) bool {
+	return harnessapi.ClassifyResponse(response, err) == harnessapi.VerdictConflict ||
+		strings.Contains(strings.ToLower(harnessapi.ErrorBody(err)), "agent already exists")
+}
 
-	connectionStatus := nextgen.CONNECTED_STATUS_UNSET_V1ConnectedStatus
-	if agent.Health.ConnectionStatus != nil {
-		connectionStatus = *agent.Health.ConnectionStatus
-	}
-	healthStatus := nextgen.HEALTH_STATUS_UNSET_Servicev1HealthStatus
-	healthMessage := ""
-	if agent.Health.HarnessGitopsAgent != nil {
-		healthMessage = strings.TrimSpace(agent.Health.HarnessGitopsAgent.Message)
-		if agent.Health.HarnessGitopsAgent.Status != nil {
-			healthStatus = *agent.Health.HarnessGitopsAgent.Status
-		}
-	}
+func isAgentNotFound(err error) bool {
+	return errors.Is(err, ErrAgentNotFound) ||
+		harnessapi.VerdictOf(err) == harnessapi.VerdictAbsent
+}
 
-	readiness.Ready = connectionStatus == nextgen.CONNECTED_V1ConnectedStatus &&
-		healthStatus == nextgen.HEALTHY_Servicev1HealthStatus
-	if readiness.Ready {
-		readiness.Message = "Harness GitOps agent is Connected and Healthy"
-		return readiness
-	}
-
-	readiness.Message = fmt.Sprintf(
-		"Harness GitOps agent is not ready: connection=%s health=%s",
-		connectionStatus,
-		healthStatus,
+func agentAPIError(
+	operation string,
+	identifier string,
+	response *http.Response,
+	err error,
+) error {
+	return harnessapi.APIError(
+		operation,
+		fmt.Sprintf("agentIdentifier=%q", identifier),
+		response,
+		err,
 	)
-	if healthMessage != "" {
-		readiness.Message += ": " + healthMessage
-	}
-	return readiness
 }

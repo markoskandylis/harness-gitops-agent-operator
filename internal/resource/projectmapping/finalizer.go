@@ -31,7 +31,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 )
 
 // Harness mapping reads can lag a successful create. A Mapping deleted
@@ -122,12 +122,7 @@ func (r *Reconciler) finalizeProjectMapping(
 
 	// A deleting Agent remains the authority for its API-key Secret until all
 	// referencing Mapping finalizers have completed.
-	session, err := harnessapi.SessionForAgent(
-		ctx,
-		r.apiReader(),
-		r.APIKeySecretNamespace,
-		agent,
-	)
+	session, err := r.sessionForAgent(ctx, agent)
 	if err != nil {
 		return r.blockMappingCleanup(
 			ctx,
@@ -322,7 +317,7 @@ func projectMappingCreateVisibilityGraceRemaining(
 func (r *Reconciler) authorizeProjectMappingCleanup(
 	ctx context.Context,
 	mapping *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
 	decision, err := r.resolveProjectMappingClaim(ctx, mapping, request, mappingID)
@@ -351,9 +346,9 @@ func (r *Reconciler) authorizeProjectMappingCleanup(
 
 func projectMappingCleanupRequest(
 	remote *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus,
-) (harnessapi.ProjectMappingRequest, string, error) {
+) (ProjectMappingRequest, string, error) {
 	if remote == nil {
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("remote status is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("remote status is empty")
 	}
 
 	mappingID := strings.TrimSpace(remote.MappingID)
@@ -368,69 +363,69 @@ func projectMappingCleanupRequest(
 
 	switch {
 	case mappingID == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("mapping ID is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("mapping ID is empty")
 	case accountID == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("account ID is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("account ID is empty")
 	case agentID == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("agent ID is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("agent ID is empty")
 	case targetOrgID == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("target organization ID is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("target organization ID is empty")
 	case targetProjectID == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("target project ID is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("target project ID is empty")
 	case appProject == "":
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf("appProject is empty")
+		return ProjectMappingRequest{}, "", fmt.Errorf("appProject is empty")
 	}
 
 	switch scope {
 	case agentScopeAccount:
 		if agentOrgID != "" || agentProjectID != "" {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"ACCOUNT-scoped agent identity must not contain an organization or project",
 			)
 		}
 	case agentScopeOrg:
 		if agentOrgID == "" {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"ORG-scoped agent identity has an empty organization ID",
 			)
 		}
 		if agentProjectID != "" {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"ORG-scoped agent identity must not contain a project",
 			)
 		}
 		if targetOrgID != agentOrgID {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"ORG-scoped agent and target organization IDs differ",
 			)
 		}
 	case agentScopeProject:
 		if agentOrgID == "" || agentProjectID == "" {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"PROJECT-scoped agent identity requires organization and project IDs",
 			)
 		}
 		if targetOrgID != agentOrgID || targetProjectID != agentProjectID {
-			return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+			return ProjectMappingRequest{}, "", fmt.Errorf(
 				"PROJECT-scoped agent and target scopes differ",
 			)
 		}
 	default:
-		return harnessapi.ProjectMappingRequest{}, "", fmt.Errorf(
+		return ProjectMappingRequest{}, "", fmt.Errorf(
 			"unsupported agent scope %q",
 			remote.Agent.Scope,
 		)
 	}
 
-	return harnessapi.ProjectMappingRequest{
+	return ProjectMappingRequest{
 		AccountIdentifier: accountID,
 		AgentIdentifier:   agentID,
 		AgentScope:        scope,
-		Agent: harnessapi.Scope{
+		Agent: Scope{
 			OrgIdentifier:     agentOrgID,
 			ProjectIdentifier: agentProjectID,
 		},
-		Mapping: harnessapi.Scope{
+		Mapping: Scope{
 			OrgIdentifier:     targetOrgID,
 			ProjectIdentifier: targetProjectID,
 		},
@@ -443,8 +438,7 @@ func (r *Reconciler) removeProjectMappingFinalizer(
 	ctx context.Context,
 	mapping *infrastructurev1.HarnessGitopsProjectMapping,
 ) (ctrl.Result, error) {
-	controllerutil.RemoveFinalizer(mapping, harnessProjectMappingFinalizer)
-	return ctrl.Result{}, r.Update(ctx, mapping)
+	return ctrl.Result{}, resourceutil.RemoveFinalizer(ctx, r.Client, mapping, harnessProjectMappingFinalizer)
 }
 
 func (r *Reconciler) blockMappingCleanup(

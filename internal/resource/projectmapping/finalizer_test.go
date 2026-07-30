@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 const mappingCleanupID = "mapping-cleanup-id"
@@ -49,7 +48,7 @@ func TestProjectMappingFinalizerFastPathsDoNotContactHarness(t *testing.T) {
 				ownership,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(request, mappingCleanupID, "account."+mappingControllerAgentID),
 			}}
 
@@ -116,7 +115,7 @@ func TestProjectMappingFinalizerRecoversPendingReturnedIDBeforeDeleting(t *testi
 		"",
 	)
 	fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{
 		exactMappingForRequest(request, mappingCleanupID, "account."+mappingControllerAgentID),
 	}}
 
@@ -158,7 +157,7 @@ func TestProjectMappingFinalizerRemovesWhenPendingReturnedIDIsAbsent(t *testing.
 	)
 	mapping.DeletionTimestamp = &oldDeletion
 	fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{nil}
+	fixture.mappingAPI.listResults = [][]ProjectMapping{nil}
 
 	if _, err := fixture.reconcile(t); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -177,7 +176,7 @@ func TestProjectMappingFinalizerWaitsForPendingCreateVisibility(t *testing.T) {
 		"",
 	)
 	fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{
+	fixture.mappingAPI.listResults = [][]ProjectMapping{
 		nil,
 		{
 			exactMappingForRequest(
@@ -255,7 +254,7 @@ func TestProjectMappingFinalizerRecoversExactAdoptionBeforeDeleting(t *testing.T
 				mappingCleanupID,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(
 					request,
 					mappingCleanupID,
@@ -299,7 +298,7 @@ func TestProjectMappingFinalizerDifferentReturnedCandidateStaysBlockedAndCorrect
 		"wrong-mapping-id",
 	)
 	fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-	fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+	fixture.mappingAPI.listResults = [][]ProjectMapping{{
 		exactMappingForRequest(request, mappingCleanupID, "account."+mappingControllerAgentID),
 	}}
 
@@ -346,13 +345,13 @@ func TestProjectMappingFinalizerAdoptionRequiresExactIDAndTuple(t *testing.T) {
 	tests := []struct {
 		name      string
 		adoptID   string
-		first     func(harnessapi.ProjectMappingRequest) harnessapi.ProjectMapping
+		first     func(ProjectMappingRequest) ProjectMapping
 		correctID bool
 	}{
 		{
 			name:    "missing ID",
 			adoptID: "missing-mapping-id",
-			first: func(request harnessapi.ProjectMappingRequest) harnessapi.ProjectMapping {
+			first: func(request ProjectMappingRequest) ProjectMapping {
 				return exactMappingForRequest(
 					request,
 					mappingCleanupID,
@@ -364,7 +363,7 @@ func TestProjectMappingFinalizerAdoptionRequiresExactIDAndTuple(t *testing.T) {
 		{
 			name:    "tuple mismatch",
 			adoptID: mappingCleanupID,
-			first: func(request harnessapi.ProjectMappingRequest) harnessapi.ProjectMapping {
+			first: func(request ProjectMappingRequest) ProjectMapping {
 				observed := exactMappingForRequest(
 					request,
 					mappingCleanupID,
@@ -387,7 +386,7 @@ func TestProjectMappingFinalizerAdoptionRequiresExactIDAndTuple(t *testing.T) {
 				test.adoptID,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{
 				{test.first(request)},
 				{exactMappingForRequest(
 					request,
@@ -475,7 +474,7 @@ func TestProjectMappingFinalizerRetainsUncertainMappingOnRecoveryFailure(t *test
 			mappingCleanupID,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(request, mappingCleanupID, "account."+mappingControllerAgentID),
 		}}
 		*fixture.statusFailAt = 1
@@ -516,7 +515,7 @@ func TestProjectMappingFinalizerDeletesManagedAndAdoptedMappings(t *testing.T) {
 			agent.Finalizers = []string{"tests.infrastructure.kandylis.co.uk/agent"}
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(
 					storedRequest,
 					mappingCleanupID,
@@ -617,7 +616,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			infrastructurev1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, winner)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(
 				request,
 				mappingCleanupID,
@@ -647,7 +646,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			infrastructurev1.OwnershipAdopted,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, loser)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(
 				request,
 				mappingCleanupID,
@@ -667,14 +666,14 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		current func(
 			*testing.T,
 			*infrastructurev1.HarnessGitopsAgent,
-		) (*infrastructurev1.HarnessGitopsProjectMapping, harnessapi.ProjectMappingRequest)
+		) (*infrastructurev1.HarnessGitopsProjectMapping, ProjectMappingRequest)
 	}{
 		{
 			name: "managed delete",
 			current: func(
 				t *testing.T,
 				agent *infrastructurev1.HarnessGitopsAgent,
-			) (*infrastructurev1.HarnessGitopsProjectMapping, harnessapi.ProjectMappingRequest) {
+			) (*infrastructurev1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 				return newOwnedDeletingMapping(t, agent, infrastructurev1.OwnershipManaged)
 			},
 		},
@@ -683,7 +682,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			current: func(
 				t *testing.T,
 				agent *infrastructurev1.HarnessGitopsAgent,
-			) (*infrastructurev1.HarnessGitopsProjectMapping, harnessapi.ProjectMappingRequest) {
+			) (*infrastructurev1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 				return newUncertainDeletingMapping(
 					t,
 					agent,
@@ -705,7 +704,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 				infrastructurev1.OwnershipManaged,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{
 				exactMappingForRequest(
 					request,
 					mappingCleanupID,
@@ -749,7 +748,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			infrastructurev1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, winner)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(
 				request,
 				mappingCleanupID,
@@ -783,7 +782,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			Reader:  fixture.reconciler.APIReader,
 			listErr: claimErr,
 		}
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(
 				request,
 				mappingCleanupID,
@@ -862,7 +861,7 @@ func TestProjectMappingFinalizerRequiresStoredIDAndFullTuple(t *testing.T) {
 			infrastructurev1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(request, "replacement-id", "account."+mappingControllerAgentID),
 		}}
 
@@ -875,41 +874,41 @@ func TestProjectMappingFinalizerRequiresStoredIDAndFullTuple(t *testing.T) {
 
 	mutations := []struct {
 		name   string
-		mutate func(*harnessapi.ProjectMapping)
+		mutate func(*ProjectMapping)
 	}{
 		{
 			name: "agent ID",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.AgentIdentifier = "different-agent"
 			},
 		},
 		{
 			name: "account ID",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.AccountIdentifier = "different-account"
 			},
 		},
 		{
 			name: "target organization",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.OrgIdentifier = "different-org"
 			},
 		},
 		{
 			name: "target project",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.ProjectIdentifier = "different-project"
 			},
 		},
 		{
 			name: "AppProject",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.ArgoProjectName = "different-appproject"
 			},
 		},
 		{
 			name: "auto-create option",
-			mutate: func(mapping *harnessapi.ProjectMapping) {
+			mutate: func(mapping *ProjectMapping) {
 				mapping.AutoCreateServiceEnv = !mapping.AutoCreateServiceEnv
 			},
 		},
@@ -930,7 +929,7 @@ func TestProjectMappingFinalizerRequiresStoredIDAndFullTuple(t *testing.T) {
 			)
 			mutation.mutate(&observed)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-			fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{observed}}
+			fixture.mappingAPI.listResults = [][]ProjectMapping{{observed}}
 
 			if _, err := fixture.reconcile(t); err != nil {
 				t.Fatalf("reconcile: %v", err)
@@ -973,7 +972,7 @@ func TestProjectMappingFinalizerRetainsOnTransientHarnessFailure(t *testing.T) {
 			infrastructurev1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
-		fixture.mappingAPI.listResults = [][]harnessapi.ProjectMapping{{
+		fixture.mappingAPI.listResults = [][]ProjectMapping{{
 			exactMappingForRequest(request, mappingCleanupID, "account."+mappingControllerAgentID),
 		}}
 		fixture.mappingAPI.deleteErr = errors.New("temporary delete failure")
@@ -1086,7 +1085,7 @@ func newOwnedDeletingMapping(
 	t *testing.T,
 	agent *infrastructurev1.HarnessGitopsAgent,
 	ownership infrastructurev1.ResourceOwnership,
-) (*infrastructurev1.HarnessGitopsProjectMapping, harnessapi.ProjectMappingRequest) {
+) (*infrastructurev1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 	t.Helper()
 	mapping := newDeletingMapping()
 	switch agent.Spec.Scope {
@@ -1110,7 +1109,7 @@ func newUncertainDeletingMapping(
 	state infrastructurev1.MappingCreationState,
 	rememberedID string,
 	adoptID string,
-) (*infrastructurev1.HarnessGitopsProjectMapping, harnessapi.ProjectMappingRequest) {
+) (*infrastructurev1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 	t.Helper()
 	mapping, request := newOwnedDeletingMapping(t, agent, "")
 	mapping.Status.CreationState = state
@@ -1124,7 +1123,7 @@ func duplicateMappingClaim(
 	t *testing.T,
 	namespace string,
 	name string,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	ownership infrastructurev1.ResourceOwnership,
 ) *infrastructurev1.HarnessGitopsProjectMapping {
 	t.Helper()

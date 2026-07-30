@@ -1,4 +1,4 @@
-package harness
+package agent
 
 import (
 	"context"
@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
+
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 func TestSDKAgentLookupUsesScopedPathCandidatesAndQueries(t *testing.T) {
@@ -175,7 +178,7 @@ func TestSDKAgentLookupDoesNotFallbackAfterNonNotFound(t *testing.T) {
 	var paths []string
 	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.Path)
-		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+		http.Error(w, `{"message":"agent not found"}`, http.StatusForbidden)
 	}))
 
 	_, err := (SDKAgentAPI{}).Lookup(
@@ -189,6 +192,9 @@ func TestSDKAgentLookupDoesNotFallbackAfterNonNotFound(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected forbidden lookup to fail")
+	}
+	if got := harnessapi.VerdictOf(err); got != harnessapi.VerdictDenied {
+		t.Fatalf("lookup verdict = %q, want %q", got, harnessapi.VerdictDenied)
 	}
 	want := []string{"/gitops/api/v1/agents/account.agent-raw-361"}
 	if !reflect.DeepEqual(paths, want) {
@@ -331,7 +337,7 @@ func TestSDKAgentDeleteStopsOnNonNotFound(t *testing.T) {
 	var paths []string
 	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.Path)
-		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+		http.Error(w, `{"message":"agent not found"}`, http.StatusForbidden)
 	}))
 
 	err := (SDKAgentAPI{}).Delete(
@@ -345,6 +351,9 @@ func TestSDKAgentDeleteStopsOnNonNotFound(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected forbidden delete to fail")
+	}
+	if got := harnessapi.VerdictOf(err); got != harnessapi.VerdictDenied {
+		t.Fatalf("delete verdict = %q, want %q", got, harnessapi.VerdictDenied)
 	}
 	want := []string{"/gitops/api/v1/agents/account.delete-agent-725"}
 	if !reflect.DeepEqual(paths, want) {
@@ -506,6 +515,172 @@ func TestSDKAgentReadinessStopsOnCanonicalNonNotFoundError(t *testing.T) {
 	}
 }
 
+func TestSDKAgentReadinessUsesConnectedHealthyPayload(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"identifier":"mapping-agent",
+			"health":{
+				"connectionStatus":"CONNECTED",
+				"harnessGitopsAgent":{
+					"status":"HEALTHY",
+					"message":"All Argo CD components are healthy"
+				}
+			}
+		}`))
+	}))
+
+	readiness, err := (SDKAgentAPI{}).Readiness(
+		context.Background(),
+		session,
+		Agent{
+			Identifier:        "mapping-agent",
+			AccountIdentifier: "account",
+			OrgIdentifier:     "org",
+			Scope:             "ORG",
+		},
+	)
+	if err != nil {
+		t.Fatalf("get agent readiness: %v", err)
+	}
+	if !readiness.Exists || !readiness.Ready {
+		t.Fatalf("expected the agent to be ready, got %#v", readiness)
+	}
+}
+
+func TestHarnessAgentReadinessRequiresConnectedAndHealthy(t *testing.T) {
+	tests := []struct {
+		name       string
+		agent      nextgen.V1Agent
+		wantReady  bool
+		wantExists bool
+	}{
+		{
+			name:       "health not reported",
+			agent:      nextgen.V1Agent{},
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "connected but unhealthy",
+			agent:      testAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.UNHEALTHY_Servicev1HealthStatus),
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "healthy but disconnected",
+			agent:      testAgentHealth(nextgen.DISCONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
+			wantReady:  false,
+			wantExists: true,
+		},
+		{
+			name:       "connected and healthy",
+			agent:      testAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
+			wantReady:  true,
+			wantExists: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			readiness := readinessFromAgent(tt.agent)
+			if readiness.Exists != tt.wantExists || readiness.Ready != tt.wantReady {
+				t.Fatalf("unexpected readiness: got %#v", readiness)
+			}
+			if readiness.Message == "" {
+				t.Fatal("readiness message must explain the observed state")
+			}
+		})
+	}
+}
+
+func testAgentHealth(
+	connection nextgen.V1ConnectedStatus,
+	status nextgen.Servicev1HealthStatus,
+) nextgen.V1Agent {
+	return nextgen.V1Agent{Health: &nextgen.V1AgentHealth{
+		ConnectionStatus: &connection,
+		HarnessGitopsAgent: &nextgen.V1AgentComponentHealth{
+			Status:  &status,
+			Message: "test health",
+		},
+	}}
+}
+
+func TestAgentCreateReturnsRawAndPrefixedIdentifiers(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"identifier":"agent-id",
+			"prefixedIdentifier":"account.agent-id",
+			"credentials":{"privateKey":"token"}
+		}`))
+	}))
+
+	result, err := (SDKAgentAPI{}).Create(
+		context.Background(),
+		session,
+		CreateAgentRequest{
+			Agent: Agent{
+				Identifier:        "agent-id",
+				Name:              "Agent",
+				AccountIdentifier: "account",
+				Scope:             "ACCOUNT",
+				Type:              "MANAGED_ARGO_PROVIDER",
+				Operator:          "ARGO",
+			},
+			Namespace: "default",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	if result.Identifier != "agent-id" ||
+		result.PrefixedIdentifier != "account.agent-id" ||
+		result.InitialToken != "token" {
+		t.Fatalf("unexpected create result: %#v", result)
+	}
+}
+
+func TestAgentCreateClassifiesConflictByHTTPStatus(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"message":"conflict without canonical wording"}`, http.StatusConflict)
+	}))
+
+	_, err := (SDKAgentAPI{}).Create(
+		context.Background(),
+		session,
+		CreateAgentRequest{Agent: Agent{
+			Identifier:        "agent-id",
+			AccountIdentifier: "account",
+			Scope:             "ACCOUNT",
+		}},
+	)
+	if !errors.Is(err, ErrAgentAlreadyExists) {
+		t.Fatalf("expected already-exists classification, got %v", err)
+	}
+}
+
+func TestAgentCreateClassifiesServerErrorAsOutcomeUnknown(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"gateway failed after forwarding"}`, http.StatusBadGateway)
+	}))
+
+	_, err := (SDKAgentAPI{}).Create(
+		context.Background(),
+		session,
+		CreateAgentRequest{Agent: Agent{
+			Identifier:        "agent-id",
+			AccountIdentifier: "account",
+			Scope:             "ACCOUNT",
+		}},
+	)
+	if !errors.Is(err, ErrAgentCreateOutcomeUnknown) {
+		t.Fatalf("expected unknown create outcome, got %v", err)
+	}
+}
+
 func TestSDKAgentCreateSendsStableTags(t *testing.T) {
 	var requestAgent nextgen.V1Agent
 	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -552,12 +727,12 @@ func TestSDKAgentCreateSendsStableTags(t *testing.T) {
 func TestSDKAgentCreateClassifiesAllAmbiguousOutcomes(t *testing.T) {
 	tests := []struct {
 		name        string
-		session     func(*testing.T) *Session
+		session     func(*testing.T) *harnessapi.Session
 		wantUnknown bool
 	}{
 		{
 			name: "transport error without response",
-			session: func(*testing.T) *Session {
+			session: func(t *testing.T) *harnessapi.Session {
 				cfg := nextgen.NewConfiguration()
 				cfg.HTTPClient.RetryMax = 0
 				cfg.HTTPClient.HTTPClient.Transport = roundTripperFunc(
@@ -565,23 +740,28 @@ func TestSDKAgentCreateClassifiesAllAmbiguousOutcomes(t *testing.T) {
 						return nil, errors.New("connection closed")
 					},
 				)
-				return &Session{client: nextgen.NewAPIClient(cfg)}
+				return testSessionWithClient(t, nextgen.NewAPIClient(cfg))
 			},
 			wantUnknown: true,
 		},
 		{
 			name:        "request timeout",
-			session:     func(t *testing.T) *Session { return testStatusSession(t, http.StatusRequestTimeout) },
+			session:     func(t *testing.T) *harnessapi.Session { return testStatusSession(t, http.StatusRequestTimeout) },
 			wantUnknown: true,
 		},
 		{
 			name:        "server error",
-			session:     func(t *testing.T) *Session { return testStatusSession(t, http.StatusServiceUnavailable) },
+			session:     func(t *testing.T) *harnessapi.Session { return testStatusSession(t, http.StatusServiceUnavailable) },
+			wantUnknown: true,
+		},
+		{
+			name:        "rate limited",
+			session:     func(t *testing.T) *harnessapi.Session { return testStatusSession(t, http.StatusTooManyRequests) },
 			wantUnknown: true,
 		},
 		{
 			name:    "definite client error",
-			session: func(t *testing.T) *Session { return testStatusSession(t, http.StatusUnprocessableEntity) },
+			session: func(t *testing.T) *harnessapi.Session { return testStatusSession(t, http.StatusUnprocessableEntity) },
 		},
 	}
 
@@ -608,4 +788,40 @@ func TestSDKAgentCreateClassifiesAllAmbiguousOutcomes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testSession(t *testing.T, handler http.Handler) *harnessapi.Session {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cfg := nextgen.NewConfiguration()
+	cfg.BasePath = server.URL
+	cfg.HTTPClient.RetryMax = 0
+	return testSessionWithClient(t, nextgen.NewAPIClient(cfg))
+}
+
+func testStatusSession(t *testing.T, status int) *harnessapi.Session {
+	t.Helper()
+	return testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, http.StatusText(status), status)
+	}))
+}
+
+func testSessionWithClient(
+	t *testing.T,
+	client *nextgen.APIClient,
+) *harnessapi.Session {
+	t.Helper()
+	session, err := harnessapi.NewSessionWithClient("test-api-key", client)
+	if err != nil {
+		t.Fatalf("create Harness test session: %v", err)
+	}
+	return session
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }

@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 const mappingClaimRemoteID = "shared-harness-mapping"
@@ -811,7 +810,7 @@ func newProjectMappingClaimObjects(
 ) (
 	*infrastructurev1.HarnessGitopsAgent,
 	*infrastructurev1.HarnessGitopsProjectMapping,
-	harnessapi.ProjectMappingRequest,
+	ProjectMappingRequest,
 ) {
 	t.Helper()
 	agent := newMappingControllerAgent(agentScopeAccount)

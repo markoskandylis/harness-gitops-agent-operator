@@ -18,6 +18,11 @@ const (
 	agentRegistrationRetryInterval = time.Second
 )
 
+var (
+	errHarnessAgentAlreadyExists    = errors.New("harness GitOps agent already exists")
+	errHarnessAgentOwnershipUnknown = errors.New("harness GitOps agent ownership is not proven")
+)
+
 type agentRegistrationOutcome struct {
 	identifier   string
 	initialToken string
@@ -96,7 +101,7 @@ func (r *Reconciler) reconcileAgentRegistration(
 	)
 	if err != nil {
 		if errors.Is(err, errHarnessAgentAlreadyExists) ||
-			errors.Is(err, harnessapi.ErrAgentCreateOutcomeUnknown) {
+			errors.Is(err, ErrAgentCreateOutcomeUnknown) {
 			if statusErr := r.setAgentCreationState(
 				ctx,
 				agentCR,
@@ -164,13 +169,13 @@ func (r *Reconciler) createHarnessAgent(
 	result, err := r.harnessAgentAPI().Create(
 		ctx,
 		session,
-		harnessapi.CreateAgentRequest{
+		CreateAgentRequest{
 			Agent:     agent,
 			Namespace: namespace,
 		},
 	)
 	if err != nil {
-		if errors.Is(err, harnessapi.ErrAgentAlreadyExists) {
+		if errors.Is(err, ErrAgentAlreadyExists) {
 			return "", "", fmt.Errorf(
 				"%w: %q; create a replacement HarnessGitopsAgent CR with "+
 					"spec.existingAgentIdentifier set to reference the existing Agent",
@@ -184,7 +189,7 @@ func (r *Reconciler) createHarnessAgent(
 	if identifier != strings.TrimSpace(agent.Identifier) {
 		return "", "", fmt.Errorf(
 			"%w: Harness returned Agent identifier %q for requested identifier %q",
-			harnessapi.ErrAgentCreateOutcomeUnknown,
+			ErrAgentCreateOutcomeUnknown,
 			identifier,
 			agent.Identifier,
 		)
@@ -205,10 +210,32 @@ func (r *Reconciler) lookupAgentOwnedByCR(
 	return lookup.Exists && agentOwnedByCR(agentCR, expected, lookup.Agent), nil
 }
 
+func harnessAgentFor(
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	identifier string,
+) Agent {
+	return Agent{
+		Identifier:        strings.TrimSpace(identifier),
+		Name:              strings.TrimSpace(agentCR.Spec.Name),
+		AccountIdentifier: strings.TrimSpace(agentCR.Spec.AccountId),
+		OrgIdentifier: harnessapi.OrgIdentifierForScope(
+			agentCR.Spec.Scope,
+			agentCR.Spec.OrgId,
+		),
+		ProjectIdentifier: harnessapi.ProjectIdentifierForScope(
+			agentCR.Spec.Scope,
+			agentCR.Spec.ProjectId,
+		),
+		Scope:    strings.TrimSpace(agentCR.Spec.Scope),
+		Type:     strings.TrimSpace(agentCR.Spec.Type),
+		Operator: strings.TrimSpace(agentCR.Spec.Operator),
+	}
+}
+
 func agentOwnedByCR(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
-	expected harnessapi.Agent,
-	observed harnessapi.Agent,
+	expected Agent,
+	observed Agent,
 ) bool {
 	uid := strings.TrimSpace(string(agentCR.UID))
 	if uid == "" || strings.TrimSpace(observed.Tags[harnessAgentCRUIDTag]) != uid {
@@ -217,8 +244,8 @@ func agentOwnedByCR(
 	return agentTupleEqual(expected, observed)
 }
 
-func agentTupleEqual(expected, observed harnessapi.Agent) bool {
-	return harnessapi.AgentIdentifiersEquivalent(
+func agentTupleEqual(expected, observed Agent) bool {
+	return harnessapi.IdentifiersEquivalent(
 		expected.Scope,
 		observed.Identifier,
 		expected.Identifier,

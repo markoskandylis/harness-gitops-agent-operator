@@ -59,7 +59,7 @@ type projectMappingClaimDecision struct {
 func (r *Reconciler) requireProjectMappingClaim(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
 	return r.requireProjectMappingClaimWithProvisional(
@@ -75,7 +75,7 @@ func (r *Reconciler) requireProjectMappingClaim(
 func (r *Reconciler) requireNewExternalProjectMappingClaim(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
 	priority := projectMappingClaimExternal
@@ -99,7 +99,7 @@ func (r *Reconciler) requireNewExternalProjectMappingClaim(
 func (r *Reconciler) requireProjectMappingClaimWithProvisional(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 	provisionalPriority *projectMappingClaimPriority,
 	onConflict func(*infrastructurev1.HarnessGitopsProjectMappingStatus),
@@ -150,7 +150,7 @@ func (r *Reconciler) requireProjectMappingClaimWithProvisional(
 func (r *Reconciler) resolveProjectMappingClaim(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 ) (projectMappingClaimDecision, error) {
 	return r.resolveProjectMappingClaimWithProvisional(
@@ -165,7 +165,7 @@ func (r *Reconciler) resolveProjectMappingClaim(
 func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 	provisionalPriority *projectMappingClaimPriority,
 ) (projectMappingClaimDecision, error) {
@@ -258,7 +258,7 @@ func (r *Reconciler) projectMappingClaimPriority(
 	ctx context.Context,
 	current *infrastructurev1.HarnessGitopsProjectMapping,
 	candidate *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	mappingID string,
 	reader client.Reader,
 ) (projectMappingClaimPriority, bool, error) {
@@ -301,7 +301,7 @@ func (r *Reconciler) projectMappingClaimPriority(
 func (r *Reconciler) isProvisionalExternalProjectMappingClaim(
 	ctx context.Context,
 	candidate *infrastructurev1.HarnessGitopsProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	reader client.Reader,
 ) (bool, error) {
 	if candidate.Status.Remote != nil ||
@@ -328,10 +328,10 @@ func resolveProjectMappingClaimRequest(
 	ctx context.Context,
 	candidate *infrastructurev1.HarnessGitopsProjectMapping,
 	reader client.Reader,
-) (harnessapi.ProjectMappingRequest, bool, error) {
+) (ProjectMappingRequest, bool, error) {
 	agentName := strings.TrimSpace(candidate.Spec.AgentRef.Name)
 	if agentName == "" {
-		return harnessapi.ProjectMappingRequest{}, false, nil
+		return ProjectMappingRequest{}, false, nil
 	}
 	agent := &infrastructurev1.HarnessGitopsAgent{}
 	if err := reader.Get(ctx, client.ObjectKey{
@@ -339,9 +339,9 @@ func resolveProjectMappingClaimRequest(
 		Name:      agentName,
 	}, agent); err != nil {
 		if k8serrors.IsNotFound(err) {
-			return harnessapi.ProjectMappingRequest{}, false, nil
+			return ProjectMappingRequest{}, false, nil
 		}
-		return harnessapi.ProjectMappingRequest{}, false, fmt.Errorf(
+		return ProjectMappingRequest{}, false, fmt.Errorf(
 			"read Agent for project mapping claim %s/%s: %w",
 			candidate.Namespace,
 			candidate.Name,
@@ -351,7 +351,7 @@ func resolveProjectMappingClaimRequest(
 
 	candidateRequest, err := resolveProjectMappingRequest(agent, candidate)
 	if err != nil {
-		return harnessapi.ProjectMappingRequest{}, false, nil
+		return ProjectMappingRequest{}, false, nil
 	}
 	return candidateRequest, true, nil
 }
@@ -390,14 +390,14 @@ func sameProjectMappingResource(
 }
 
 func projectMappingRequestsEquivalent(
-	left harnessapi.ProjectMappingRequest,
-	right harnessapi.ProjectMappingRequest,
+	left ProjectMappingRequest,
+	right ProjectMappingRequest,
 ) bool {
 	leftScope := strings.ToUpper(strings.TrimSpace(left.AgentScope))
 	rightScope := strings.ToUpper(strings.TrimSpace(right.AgentScope))
 	return leftScope == rightScope &&
 		strings.TrimSpace(left.AccountIdentifier) == strings.TrimSpace(right.AccountIdentifier) &&
-		harnessapi.AgentIdentifiersEquivalent(
+		harnessapi.IdentifiersEquivalent(
 			leftScope,
 			left.AgentIdentifier,
 			right.AgentIdentifier,

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestScopedPathAgentIdentifierCandidates(t *testing.T) {
+func TestScopedIdentifierCandidates(t *testing.T) {
 	tests := []struct {
 		name       string
 		scope      string
@@ -21,7 +21,7 @@ func TestScopedPathAgentIdentifierCandidates(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := ScopedPathAgentIdentifierCandidates(test.scope, test.identifier)
+			got := ScopedIdentifierCandidates(test.scope, test.identifier)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("candidates = %#v, want %#v", got, test.want)
 			}
@@ -29,7 +29,7 @@ func TestScopedPathAgentIdentifierCandidates(t *testing.T) {
 	}
 }
 
-func TestProjectIdentifierForAgentScope(t *testing.T) {
+func TestProjectIdentifierForScope(t *testing.T) {
 	tests := []struct {
 		scope     string
 		projectID string
@@ -42,7 +42,7 @@ func TestProjectIdentifierForAgentScope(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		if got := ProjectIdentifierForAgentScope(test.scope, test.projectID); got != test.want {
+		if got := ProjectIdentifierForScope(test.scope, test.projectID); got != test.want {
 			t.Errorf("scope %q project = %q, want %q", test.scope, got, test.want)
 		}
 	}

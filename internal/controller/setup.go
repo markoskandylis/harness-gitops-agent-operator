@@ -6,8 +6,8 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/controller/agent"
-	mappingcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/controller/projectmapping"
+	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
+	mappingcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/projectmapping"
 )
 
 const (

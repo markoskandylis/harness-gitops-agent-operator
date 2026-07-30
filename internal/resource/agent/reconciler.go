@@ -22,19 +22,19 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil" // REQUIRED for Finalizers
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
-)
-
-const (
-	harnessAgentFinalizer         = "infrastructure.kandylis.co.uk/finalizer"
-	agentImmediateRequeueInterval = time.Nanosecond
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 )
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
@@ -51,10 +51,34 @@ const (
 // Reconciler reconciles a HarnessGitopsAgent object.
 type Reconciler struct {
 	client.Client
-	Scheme                *runtime.Scheme
-	APIReader             client.Reader
-	APIKeySecretNamespace string
-	agentAPI              agentAPI
+	Scheme                    *runtime.Scheme
+	APIReader                 client.Reader
+	APIKeySecretNamespace     string
+	AgentHealthResyncInterval time.Duration
+	agentAPI                  agentAPI
+}
+
+type agentAPI interface {
+	Create(
+		context.Context,
+		*harnessapi.Session,
+		CreateAgentRequest,
+	) (CreateAgentResult, error)
+	Lookup(
+		context.Context,
+		*harnessapi.Session,
+		Agent,
+	) (AgentLookupResult, error)
+	Delete(context.Context, *harnessapi.Session, Agent) error
+	ResolveToken(context.Context, *harnessapi.Session, Agent, string) (string, error)
+	Readiness(context.Context, *harnessapi.Session, Agent) (AgentReadiness, error)
+}
+
+func (r *Reconciler) harnessAgentAPI() agentAPI {
+	if r.agentAPI != nil {
+		return r.agentAPI
+	}
+	return SDKAgentAPI{}
 }
 
 // +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents,verbs=get;list;watch;update;patch
@@ -75,130 +99,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.reconcileDeletion(ctx, agentCR, existingAgentIdentifier, existingAgentMode)
 	}
 
-	if result, done, err := r.ensureFinalizer(ctx, agentCR); done {
-		return result, err
-	}
-
-	return r.reconcileReady(ctx, req, agentCR, existingAgentIdentifier, existingAgentMode)
-}
-
-func (r *Reconciler) ensureFinalizer(
-	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-) (ctrl.Result, bool, error) {
-	if controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
-		return ctrl.Result{}, false, nil
-	}
-
-	controllerutil.AddFinalizer(agentCR, harnessAgentFinalizer)
-	if err := r.Update(ctx, agentCR); err != nil {
-		return ctrl.Result{}, true, err
-	}
-	return ctrl.Result{RequeueAfter: agentImmediateRequeueInterval}, true, nil
-}
-
-func (r *Reconciler) reconcileDeletion(
-	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	existingAgentIdentifier string,
-	existingAgentMode bool,
-) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(agentCR, harnessAgentFinalizer) {
-		return ctrl.Result{}, nil
-	}
-
-	if result, done, err := r.reconcileMappingDependenciesForDeletion(
+	if result, done, err := resourceutil.EnsureFinalizer(
 		ctx,
+		r.Client,
 		agentCR,
+		harnessAgentFinalizer,
 	); done {
 		return result, err
 	}
 
-	log := logf.FromContext(ctx)
-	if existingAgentMode {
-		log.Info("Skipping Harness agent delete because existingAgentIdentifier is set", "existingAgentIdentifier", existingAgentIdentifier)
-		controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
-		return ctrl.Result{}, r.Update(ctx, agentCR)
-	}
-
-	var harnessSession *harnessapi.Session
-	deleteAuthorized := false
-	verifyOwnership := agentCR.Status.AgentOwnership == infrastructurev1.OwnershipManaged ||
-		agentCreationIsUncertain(agentCR.Status.CreationState)
-	if verifyOwnership {
-		var err error
-		harnessSession, err = harnessapi.SessionForAgent(
-			ctx,
-			r.apiReader(),
-			r.APIKeySecretNamespace,
-			agentCR,
-		)
-		if err != nil {
-			log.Error(err, "Failed to initialize Harness session for Agent ownership verification; retaining finalizer")
-			return ctrl.Result{}, err
-		}
-		deleteAuthorized, err = r.lookupAgentOwnedByCR(ctx, harnessSession, agentCR)
-		if err != nil {
-			log.Error(err, "Failed to verify Agent ownership; retaining finalizer")
-			return ctrl.Result{}, err
-		}
-	}
-
-	if !deleteAuthorized {
-		log.Info(
-			"Skipping Harness agent delete because controller ownership is not recorded",
-			"agentIdentifier", agentCR.Status.AgentIdentifier,
-			"agentOwnership", agentCR.Status.AgentOwnership,
-			"creationState", agentCR.Status.CreationState,
-		)
-		controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
-		return ctrl.Result{}, r.Update(ctx, agentCR)
-	}
-
-	log.Info("Deleting agent from Harness Platform...")
-	if harnessSession == nil {
-		var err error
-		harnessSession, err = harnessapi.SessionForAgent(
-			ctx,
-			r.apiReader(),
-			r.APIKeySecretNamespace,
-			agentCR,
-		)
-		if err != nil {
-			// Keep finalizer until cleanup in Harness succeeds.
-			log.Error(err, "Failed to initialize Harness session for delete; retaining finalizer")
-			return ctrl.Result{}, err
-		}
-	}
-
-	agentIdentifier := strings.TrimSpace(agentCR.Spec.Identifier)
-	if agentIdentifier == "" {
-		agentIdentifier = strings.TrimSpace(agentCR.Status.AgentIdentifier)
-	}
-	if agentIdentifier == "" {
-		return ctrl.Result{}, fmt.Errorf("cannot delete Harness agent: no identifier in status or spec for %s/%s", agentCR.Namespace, agentCR.Name)
-	}
-
-	err := r.deleteHarnessAgent(ctx, harnessSession, agentCR, agentIdentifier)
-	if err != nil {
-		if harnessapi.IsAgentNotFound(err) {
-			log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
-		} else {
-			if body := harnessapi.ErrorBody(err); body != "" {
-				log.Error(err, "Failed to delete agent from Harness",
-					"body", body)
-			} else {
-				log.Error(err, "Failed to delete agent from Harness")
-			}
-			return ctrl.Result{}, err
-		}
-	}
-
-	controllerutil.RemoveFinalizer(agentCR, harnessAgentFinalizer)
-	if err := r.Update(ctx, agentCR); err != nil {
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
+	return r.reconcileReady(ctx, req, agentCR, existingAgentIdentifier, existingAgentMode)
 }
 
 func (r *Reconciler) reconcileReady(
@@ -218,9 +128,9 @@ func (r *Reconciler) reconcileReady(
 			if err := r.Status().Update(ctx, agentCR); err != nil {
 				return ctrl.Result{}, err
 			}
+			log.Info("Using existing Harness GitOps Agent", "agentIdentifier", existingAgentIdentifier)
 		}
-		log.Info("Using existing Harness GitOps Agent", "agentIdentifier", existingAgentIdentifier)
-		return ctrl.Result{}, nil
+		return r.refreshAgentHealth(ctx, agentCR, existingAgentIdentifier)
 	}
 
 	agentDone := agentCR.Status.AgentIdentifier != ""
@@ -233,7 +143,7 @@ func (r *Reconciler) reconcileReady(
 	tokenSecretReady := r.tokenSecretExists(ctx, agentCR, tokenSecretName)
 
 	if agentDone && tokenSecretReady && !registrationRequired {
-		return ctrl.Result{}, nil
+		return r.refreshAgentHealth(ctx, agentCR, agentCR.Status.AgentIdentifier)
 	}
 
 	// Never recover or regenerate credentials for an agent this CR did not
@@ -250,7 +160,7 @@ func (r *Reconciler) reconcileReady(
 		)
 	}
 
-	harnessSession, err := harnessapi.SessionForAgent(
+	harnessSession, err := SessionForAgent(
 		ctx,
 		r.apiReader(),
 		r.APIKeySecretNamespace,
@@ -290,7 +200,12 @@ func (r *Reconciler) reconcileReady(
 
 	// Skip if already written to avoid invalidating the running agent.
 	if !tokenSecretReady {
-		agentToken, err := r.resolveAgentDetails(ctx, harnessSession, agentCR, agentIdentifier, initialAgentToken)
+		agentToken, err := r.harnessAgentAPI().ResolveToken(
+			ctx,
+			harnessSession,
+			harnessAgentFor(agentCR, agentIdentifier),
+			initialAgentToken,
+		)
 		if err != nil {
 			log.Error(err, "Failed to resolve agent token from Harness")
 			return ctrl.Result{}, err
@@ -302,7 +217,7 @@ func (r *Reconciler) reconcileReady(
 		log.Info("Wrote agent token secret", "secret", tokenSecretName)
 	}
 
-	return ctrl.Result{}, nil
+	return r.agentHealthResult(ctx, agentCR, harnessSession, agentIdentifier, nil)
 }
 
 func agentIdentifierForStatus(agentCR *infrastructurev1.HarnessGitopsAgent) string {
@@ -321,4 +236,107 @@ func (r *Reconciler) apiReader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
+}
+
+// SessionForAgent reads the Agent's API-key Secret and constructs a Harness
+// SDK session. An explicit namespace is authoritative; an empty namespace
+// keeps the direct-binary behavior of reading beside the Agent.
+func SessionForAgent(
+	ctx context.Context,
+	reader client.Reader,
+	apiKeySecretNamespace string,
+	agent *infrastructurev1.HarnessGitopsAgent,
+) (*harnessapi.Session, error) {
+	secretNamespace := strings.TrimSpace(apiKeySecretNamespace)
+	if secretNamespace == "" {
+		secretNamespace = agent.Namespace
+	}
+
+	return harnessapi.SessionFromSecret(ctx, reader, client.ObjectKey{
+		Name:      agent.Spec.ApiKeySecretRef,
+		Namespace: secretNamespace,
+	})
+}
+
+func (r *Reconciler) upsertAgentTokenSecret(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	secretName string,
+	agentToken string,
+) error {
+	tokenSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: agentCR.Namespace,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tokenSecret, func() error {
+		if err := ctrl.SetControllerReference(agentCR, tokenSecret, r.Scheme); err != nil {
+			return err
+		}
+		if tokenSecret.Labels == nil {
+			tokenSecret.Labels = map[string]string{}
+		}
+		tokenSecret.Labels[ManagedByLabelKey] = ManagedByLabelValue
+		tokenSecret.Type = corev1.SecretTypeOpaque
+		if tokenSecret.Data == nil {
+			tokenSecret.Data = map[string][]byte{}
+		}
+		// Consumed by gitops-helm via envFrom(secretRef).
+		// Store exactly as returned by the Harness API (base64-encoded PEM).
+		tokenSecret.Data[gitopsAgentTokenSecretKey] = []byte(agentToken)
+		return nil
+	})
+	return err
+}
+
+func (r *Reconciler) tokenSecretExists(
+	ctx context.Context,
+	agentCR *infrastructurev1.HarnessGitopsAgent,
+	secretName string,
+) bool {
+	existing := &corev1.Secret{}
+	if err := r.apiReader().Get(
+		ctx,
+		client.ObjectKey{Name: secretName, Namespace: agentCR.Namespace},
+		existing,
+	); err != nil {
+		return false
+	}
+	token, ok := existing.Data[gitopsAgentTokenSecretKey]
+	return ok && len(token) > 0
+}
+
+// SetupWithManager registers the Agent controller and its dependent watches.
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&infrastructurev1.HarnessGitopsAgent{}).
+		Owns(&corev1.Secret{}).
+		Watches(
+			&infrastructurev1.HarnessGitopsProjectMapping{},
+			handler.EnqueueRequestsFromMapFunc(projectMappingToAgentRequests),
+		).
+		Named("harnessgitopsagent").
+		Complete(r)
+}
+
+func projectMappingToAgentRequests(
+	_ context.Context,
+	object client.Object,
+) []reconcile.Request {
+	mapping, ok := object.(*infrastructurev1.HarnessGitopsProjectMapping)
+	if !ok {
+		return nil
+	}
+	agentName := strings.TrimSpace(mapping.Spec.AgentRef.Name)
+	if agentName == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: client.ObjectKey{
+			Namespace: mapping.Namespace,
+			Name:      agentName,
+		},
+	}}
 }

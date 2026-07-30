@@ -1,8 +1,9 @@
-package harness
+package projectmapping
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
-)
 
-const mappingTestAgentID = "mapping-agent"
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+)
 
 func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) {
 	var paths []string
@@ -80,99 +81,31 @@ func TestSDKMappingListDoesNotHideCanonicalServerError(t *testing.T) {
 	}
 }
 
-func TestSDKAgentReadinessUsesConnectedHealthyPayload(t *testing.T) {
+func TestSDKMappingListDoesNotTreatDeniedNotFoundBodyAsAbsent(t *testing.T) {
+	var paths []string
 	session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"identifier":"mapping-agent",
-			"health":{
-				"connectionStatus":"CONNECTED",
-				"harnessGitopsAgent":{
-					"status":"HEALTHY",
-					"message":"All Argo CD components are healthy"
-				}
-			}
-		}`))
+		paths = append(paths, r.URL.Path)
+		http.Error(w, `{"message":"project not found"}`, http.StatusForbidden)
 	}))
 
-	readiness, err := (SDKAgentAPI{}).Readiness(
+	_, err := (SDKProjectMappingAPI{}).List(
 		context.Background(),
 		session,
-		Agent{
-			Identifier:        mappingTestAgentID,
-			AccountIdentifier: "account",
-			OrgIdentifier:     "org",
-			Scope:             "ORG",
-		},
+		sdkMappingTestRequest(),
 	)
-	if err != nil {
-		t.Fatalf("get agent readiness: %v", err)
+	if err == nil {
+		t.Fatal("expected denied list to fail")
 	}
-	if !readiness.Exists || !readiness.Ready {
-		t.Fatalf("expected the agent to be ready, got %#v", readiness)
+	if got := harnessapi.VerdictOf(err); got != harnessapi.VerdictDenied {
+		t.Fatalf("list verdict = %q, want %q", got, harnessapi.VerdictDenied)
 	}
-}
-
-func TestHarnessAgentReadinessRequiresConnectedAndHealthy(t *testing.T) {
-	tests := []struct {
-		name       string
-		agent      nextgen.V1Agent
-		wantReady  bool
-		wantExists bool
-	}{
-		{
-			name:       "health not reported",
-			agent:      nextgen.V1Agent{},
-			wantReady:  false,
-			wantExists: true,
-		},
-		{
-			name:       "connected but unhealthy",
-			agent:      mappingSDKTestAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.UNHEALTHY_Servicev1HealthStatus),
-			wantReady:  false,
-			wantExists: true,
-		},
-		{
-			name:       "healthy but disconnected",
-			agent:      mappingSDKTestAgentHealth(nextgen.DISCONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
-			wantReady:  false,
-			wantExists: true,
-		},
-		{
-			name:       "connected and healthy",
-			agent:      mappingSDKTestAgentHealth(nextgen.CONNECTED_V1ConnectedStatus, nextgen.HEALTHY_Servicev1HealthStatus),
-			wantReady:  true,
-			wantExists: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			readiness := readinessFromAgent(tt.agent)
-			if readiness.Exists != tt.wantExists || readiness.Ready != tt.wantReady {
-				t.Fatalf("unexpected readiness: got %#v", readiness)
-			}
-			if readiness.Message == "" {
-				t.Fatal("readiness message must explain the observed state")
-			}
-		})
+	want := []string{"/gitops/api/v2/agents/org.mapping-agent/appprojectsmappings"}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("denied list queried alternate candidates: got %#v, want %#v", paths, want)
 	}
 }
 
-func mappingSDKTestAgentHealth(
-	connection nextgen.V1ConnectedStatus,
-	status nextgen.Servicev1HealthStatus,
-) nextgen.V1Agent {
-	return nextgen.V1Agent{Health: &nextgen.V1AgentHealth{
-		ConnectionStatus: &connection,
-		HarnessGitopsAgent: &nextgen.V1AgentComponentHealth{
-			Status:  &status,
-			Message: "test health",
-		},
-	}}
-}
-
-func newSDKMappingTestSession(t *testing.T, handler http.Handler) *Session {
+func newSDKMappingTestSession(t *testing.T, handler http.Handler) *harnessapi.Session {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -180,9 +113,7 @@ func newSDKMappingTestSession(t *testing.T, handler http.Handler) *Session {
 	cfg := nextgen.NewConfiguration()
 	cfg.BasePath = server.URL
 	cfg.HTTPClient.RetryMax = 0
-	return &Session{
-		client: nextgen.NewAPIClient(cfg),
-	}
+	return newTestHarnessSession(t, nextgen.NewAPIClient(cfg))
 }
 
 func sdkMappingTestRequest() ProjectMappingRequest {
@@ -337,5 +268,159 @@ func TestSDKMappingDeleteStopsOnNonNotFoundError(t *testing.T) {
 	want := []string{"/gitops/api/v2/agents/account.mapping-agent/appprojectsmapping/mapping-1"}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("non-404 delete error was retried on alternate candidates: got %#v, want %#v", paths, want)
+	}
+}
+
+func TestProjectMappingCreateReturnsRemoteIdentity(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"identifier":"mapping-id",
+			"accountIdentifier":"account",
+			"orgIdentifier":"mapped-org",
+			"projectIdentifier":"mapped-project",
+			"argoProjectName":"default"
+		}`))
+	}))
+
+	mapping, err := (SDKProjectMappingAPI{}).Create(
+		context.Background(),
+		session,
+		testMappingRequest(),
+	)
+	if err != nil {
+		t.Fatalf("create mapping: %v", err)
+	}
+	if mapping.Identifier != "mapping-id" || mapping.AgentIdentifier != "account.agent-id" {
+		t.Fatalf("unexpected mapping identity: %#v", mapping)
+	}
+}
+
+func TestProjectMappingCreateClassifiesAmbiguousOutcomes(t *testing.T) {
+	tests := []struct {
+		name        string
+		session     func(*testing.T) *harnessapi.Session
+		wantUnknown bool
+	}{
+		{
+			name: "transport error without an HTTP response",
+			session: func(t *testing.T) *harnessapi.Session {
+				cfg := nextgen.NewConfiguration()
+				cfg.HTTPClient.RetryMax = 0
+				cfg.HTTPClient.HTTPClient.Transport = roundTripperFunc(
+					func(*http.Request) (*http.Response, error) {
+						return nil, errors.New("connection closed before a response")
+					},
+				)
+				return newTestHarnessSession(t, nextgen.NewAPIClient(cfg))
+			},
+			wantUnknown: true,
+		},
+		{
+			name: "request timeout",
+			session: func(t *testing.T) *harnessapi.Session {
+				return testStatusSession(t, http.StatusRequestTimeout)
+			},
+			wantUnknown: true,
+		},
+		{
+			name: "server error",
+			session: func(t *testing.T) *harnessapi.Session {
+				return testStatusSession(t, http.StatusBadGateway)
+			},
+			wantUnknown: true,
+		},
+		{
+			name: "rate limited",
+			session: func(t *testing.T) *harnessapi.Session {
+				return testStatusSession(t, http.StatusTooManyRequests)
+			},
+			wantUnknown: true,
+		},
+		{
+			name: "definite client rejection",
+			session: func(t *testing.T) *harnessapi.Session {
+				return testStatusSession(t, http.StatusBadRequest)
+			},
+			wantUnknown: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := (SDKProjectMappingAPI{}).Create(
+				context.Background(),
+				test.session(t),
+				testMappingRequest(),
+			)
+			if err == nil {
+				t.Fatal("expected create to fail")
+			}
+			if got := errors.Is(err, ErrProjectMappingCreateOutcomeUnknown); got != test.wantUnknown {
+				t.Fatalf("outcomeUnknown = %t, want %t: %v", got, test.wantUnknown, err)
+			}
+		})
+	}
+}
+
+func TestProjectMappingCreateRejectsEmptySuccessfulResponse(t *testing.T) {
+	session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+
+	_, err := (SDKProjectMappingAPI{}).Create(
+		context.Background(),
+		session,
+		testMappingRequest(),
+	)
+	if !errors.Is(err, ErrProjectMappingCreateOutcomeUnknown) {
+		t.Fatalf("expected unknown create outcome, got %v", err)
+	}
+}
+
+func testSession(t *testing.T, handler http.Handler) *harnessapi.Session {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cfg := nextgen.NewConfiguration()
+	cfg.BasePath = server.URL
+	cfg.HTTPClient.RetryMax = 0
+	return newTestHarnessSession(t, nextgen.NewAPIClient(cfg))
+}
+
+func testStatusSession(t *testing.T, status int) *harnessapi.Session {
+	t.Helper()
+	return testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, http.StatusText(status), status)
+	}))
+}
+
+func newTestHarnessSession(t *testing.T, client *nextgen.APIClient) *harnessapi.Session {
+	t.Helper()
+	session, err := harnessapi.NewSessionWithClient("test-api-key", client)
+	if err != nil {
+		t.Fatalf("create Harness session: %v", err)
+	}
+	return session
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func testMappingRequest() ProjectMappingRequest {
+	return ProjectMappingRequest{
+		AccountIdentifier: "account",
+		AgentIdentifier:   "agent-id",
+		AgentScope:        "ACCOUNT",
+		Mapping: Scope{
+			OrgIdentifier:     "mapped-org",
+			ProjectIdentifier: "mapped-project",
+		},
+		ArgoProjectName: "default",
 	}
 }

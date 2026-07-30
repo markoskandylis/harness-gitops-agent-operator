@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/controller/agent"
+	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
 )
 
 var _ = Describe("HarnessGitopsAgent Controller", func() {

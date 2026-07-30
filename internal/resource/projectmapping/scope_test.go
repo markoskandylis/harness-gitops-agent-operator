@@ -8,7 +8,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
 
 const (
@@ -50,21 +49,21 @@ func TestResolveProjectMappingRequest(t *testing.T) {
 		name    string
 		agent   *infrastructurev1.HarnessGitopsAgent
 		mapping *infrastructurev1.HarnessGitopsProjectMapping
-		want    harnessapi.ProjectMappingRequest
+		want    ProjectMappingRequest
 	}{
 		{
 			name:    "project scope inherits agent org and project",
 			agent:   projectAgent,
 			mapping: projectMapping,
-			want: harnessapi.ProjectMappingRequest{
+			want: ProjectMappingRequest{
 				AccountIdentifier: scopeTestAccountID,
 				AgentIdentifier:   "registered-agent",
 				AgentScope:        agentScopeProject,
-				Agent: harnessapi.Scope{
+				Agent: Scope{
 					OrgIdentifier:     scopeTestAgentOrgID,
 					ProjectIdentifier: scopeTestAgentProjectID,
 				},
-				Mapping: harnessapi.Scope{
+				Mapping: Scope{
 					OrgIdentifier:     scopeTestAgentOrgID,
 					ProjectIdentifier: scopeTestAgentProjectID,
 				},
@@ -75,15 +74,15 @@ func TestResolveProjectMappingRequest(t *testing.T) {
 			name:    "project scope accepts equivalent explicit target",
 			agent:   projectExplicitAgent,
 			mapping: projectExplicitMapping,
-			want: harnessapi.ProjectMappingRequest{
+			want: ProjectMappingRequest{
 				AccountIdentifier: scopeTestAccountID,
 				AgentIdentifier:   "registered-agent",
 				AgentScope:        agentScopeProject,
-				Agent: harnessapi.Scope{
+				Agent: Scope{
 					OrgIdentifier:     scopeTestAgentOrgID,
 					ProjectIdentifier: scopeTestAgentProjectID,
 				},
-				Mapping: harnessapi.Scope{
+				Mapping: Scope{
 					OrgIdentifier:     scopeTestAgentOrgID,
 					ProjectIdentifier: scopeTestAgentProjectID,
 				},
@@ -94,14 +93,14 @@ func TestResolveProjectMappingRequest(t *testing.T) {
 			name:    "org scope uses existing agent and explicit target project",
 			agent:   orgAgent,
 			mapping: orgMapping,
-			want: harnessapi.ProjectMappingRequest{
+			want: ProjectMappingRequest{
 				AccountIdentifier: scopeTestAccountID,
 				AgentIdentifier:   "shared-org-agent",
 				AgentScope:        agentScopeOrg,
-				Agent: harnessapi.Scope{
+				Agent: Scope{
 					OrgIdentifier: scopeTestAgentOrgID,
 				},
-				Mapping: harnessapi.Scope{
+				Mapping: Scope{
 					OrgIdentifier:     scopeTestAgentOrgID,
 					ProjectIdentifier: scopeTestTargetProjectID,
 				},
@@ -113,12 +112,12 @@ func TestResolveProjectMappingRequest(t *testing.T) {
 			name:    "account scope keeps agent and target scopes separate",
 			agent:   accountAgent,
 			mapping: accountMapping,
-			want: harnessapi.ProjectMappingRequest{
+			want: ProjectMappingRequest{
 				AccountIdentifier: scopeTestAccountID,
 				AgentIdentifier:   "registered-agent",
 				AgentScope:        agentScopeAccount,
-				Agent:             harnessapi.Scope{},
-				Mapping: harnessapi.Scope{
+				Agent:             Scope{},
+				Mapping: Scope{
 					OrgIdentifier:     scopeTestTargetOrgID,
 					ProjectIdentifier: scopeTestTargetProjectID,
 				},

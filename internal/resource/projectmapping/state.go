@@ -33,15 +33,15 @@ import (
 )
 
 type projectMappingSelection struct {
-	mapping       *harnessapi.ProjectMapping
+	mapping       *ProjectMapping
 	conflict      bool
 	adoptConflict bool
 	duplicate     bool
 }
 
 func selectProjectMapping(
-	mappings []harnessapi.ProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	mappings []ProjectMapping,
+	request ProjectMappingRequest,
 	resource *infrastructurev1.HarnessGitopsProjectMapping,
 ) projectMappingSelection {
 	rememberedID := ""
@@ -53,7 +53,7 @@ func selectProjectMapping(
 	rememberedOwned := rememberedID != "" && isDeletionOwnership(rememberedOwnership)
 	rememberedOwnedMismatch := false
 
-	exact := make([]harnessapi.ProjectMapping, 0, 1)
+	exact := make([]ProjectMapping, 0, 1)
 	conflict := false
 	adoptID := strings.TrimSpace(resource.Spec.AdoptMappingID)
 	adoptConflict := false
@@ -118,9 +118,9 @@ func selectProjectMapping(
 }
 
 func projectMappingWithID(
-	mappings []harnessapi.ProjectMapping,
+	mappings []ProjectMapping,
 	id string,
-) *harnessapi.ProjectMapping {
+) *ProjectMapping {
 	if id == "" {
 		return nil
 	}
@@ -134,11 +134,11 @@ func projectMappingWithID(
 }
 
 func projectMappingMatches(
-	mapping harnessapi.ProjectMapping,
-	request harnessapi.ProjectMappingRequest,
+	mapping ProjectMapping,
+	request ProjectMappingRequest,
 ) bool {
 	return strings.TrimSpace(mapping.Identifier) != "" &&
-		harnessapi.AgentIdentifiersEquivalent(
+		harnessapi.IdentifiersEquivalent(
 			request.AgentScope,
 			mapping.AgentIdentifier,
 			request.AgentIdentifier,
@@ -151,7 +151,7 @@ func projectMappingMatches(
 }
 
 func remoteStatusForRequest(
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 ) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
 	return &infrastructurev1.HarnessGitopsProjectMappingRemoteStatus{
 		Agent: infrastructurev1.HarnessGitopsProjectMappingAgentStatus{
@@ -171,8 +171,8 @@ func remoteStatusForRequest(
 }
 
 func remoteStatusForObserved(
-	request harnessapi.ProjectMappingRequest,
-	mapping harnessapi.ProjectMapping,
+	request ProjectMappingRequest,
+	mapping ProjectMapping,
 ) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
 	remote := remoteStatusForRequest(request)
 	remote.MappingID = strings.TrimSpace(mapping.Identifier)
@@ -184,7 +184,7 @@ func remoteStatusForObserved(
 
 func unresolvedRemoteStatus(
 	current *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 ) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
 	if current == nil {
 		return remoteStatusForRequest(request)
@@ -206,7 +206,7 @@ func isUncertainCreationState(state infrastructurev1.MappingCreationState) bool 
 
 func preserveMappingFailureState(
 	status *infrastructurev1.HarnessGitopsProjectMappingStatus,
-	request harnessapi.ProjectMappingRequest,
+	request ProjectMappingRequest,
 	startedCreationState infrastructurev1.MappingCreationState,
 ) {
 	if status.Remote != nil && isDeletionOwnership(status.Remote.Ownership) {
@@ -221,21 +221,6 @@ func preserveMappingFailureState(
 	}
 	status.CreationState = ""
 	status.Remote = remoteStatusForRequest(request)
-}
-
-func mappingHarnessAgent(
-	agent *infrastructurev1.HarnessGitopsAgent,
-	request harnessapi.ProjectMappingRequest,
-) harnessapi.Agent {
-	return harnessapi.Agent{
-		Identifier:        request.AgentIdentifier,
-		Name:              agent.Spec.Name,
-		AccountIdentifier: request.AccountIdentifier,
-		OrgIdentifier:     request.Agent.OrgIdentifier,
-		ProjectIdentifier: request.Agent.ProjectIdentifier,
-		Scope:             request.AgentScope,
-		Type:              agent.Spec.Type,
-	}
 }
 
 func (r *Reconciler) setReady(
@@ -288,18 +273,25 @@ func (r *Reconciler) apiReader() client.Reader {
 	return r.Client
 }
 
+func (r *Reconciler) sessionForAgent(
+	ctx context.Context,
+	agent *infrastructurev1.HarnessGitopsAgent,
+) (*harnessapi.Session, error) {
+	secretNamespace := strings.TrimSpace(r.APIKeySecretNamespace)
+	if secretNamespace == "" {
+		secretNamespace = agent.Namespace
+	}
+	return harnessapi.SessionFromSecret(ctx, r.apiReader(), client.ObjectKey{
+		Name:      agent.Spec.ApiKeySecretRef,
+		Namespace: secretNamespace,
+	})
+}
+
 func (r *Reconciler) projectMappingAPI() mappingReconcileAPI {
 	if r.mappingAPI != nil {
 		return r.mappingAPI
 	}
-	return harnessapi.SDKProjectMappingAPI{}
-}
-
-func (r *Reconciler) agentReadinessAPI() mappingAgentReadinessAPI {
-	if r.agentAPI != nil {
-		return r.agentAPI
-	}
-	return harnessapi.SDKAgentAPI{}
+	return SDKProjectMappingAPI{}
 }
 
 func (r *Reconciler) pendingRetryInterval() time.Duration {

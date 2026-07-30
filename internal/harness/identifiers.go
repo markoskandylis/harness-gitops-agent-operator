@@ -6,7 +6,8 @@ import (
 	"github.com/antihax/optional"
 )
 
-func optionalString(value string) optional.String {
+// OptionalString omits an empty value from a Harness SDK request.
+func OptionalString(value string) optional.String {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return optional.EmptyString()
@@ -14,9 +15,9 @@ func optionalString(value string) optional.String {
 	return optional.NewString(value)
 }
 
-// OrgIdentifierForAgentScope returns an organization only for ORG- and
-// PROJECT-scoped Agent APIs. ACCOUNT-scoped calls must omit it.
-func OrgIdentifierForAgentScope(scope string, orgIdentifier string) string {
+// OrgIdentifierForScope returns an organization only for ORG- and
+// PROJECT-scoped APIs.
+func OrgIdentifierForScope(scope string, orgIdentifier string) string {
 	if strings.EqualFold(strings.TrimSpace(scope), "ORG") ||
 		strings.EqualFold(strings.TrimSpace(scope), "PROJECT") {
 		return strings.TrimSpace(orgIdentifier)
@@ -24,26 +25,28 @@ func OrgIdentifierForAgentScope(scope string, orgIdentifier string) string {
 	return ""
 }
 
-func optionalOrgIdentifier(scope string, orgIdentifier string) optional.String {
-	return optionalString(OrgIdentifierForAgentScope(scope, orgIdentifier))
+// OptionalOrgIdentifier omits organizations from ACCOUNT-scoped requests.
+func OptionalOrgIdentifier(scope string, orgIdentifier string) optional.String {
+	return OptionalString(OrgIdentifierForScope(scope, orgIdentifier))
 }
 
-// ProjectIdentifierForAgentScope returns a project only for PROJECT-scoped
-// agent APIs. ORG and ACCOUNT agent calls must omit it.
-func ProjectIdentifierForAgentScope(scope string, projectIdentifier string) string {
+// ProjectIdentifierForScope returns a project only for PROJECT-scoped APIs.
+func ProjectIdentifierForScope(scope string, projectIdentifier string) string {
 	if strings.EqualFold(strings.TrimSpace(scope), "PROJECT") {
 		return strings.TrimSpace(projectIdentifier)
 	}
 	return ""
 }
 
-func optionalProjectIdentifier(scope string, projectIdentifier string) optional.String {
-	return optionalString(ProjectIdentifierForAgentScope(scope, projectIdentifier))
+// OptionalProjectIdentifier omits projects from ACCOUNT- and ORG-scoped
+// requests.
+func OptionalProjectIdentifier(scope string, projectIdentifier string) optional.String {
+	return OptionalString(ProjectIdentifierForScope(scope, projectIdentifier))
 }
 
-// ScopedPathAgentIdentifierCandidates returns the identifier variants accepted
-// by Harness path-based agent endpoints, in preferred order.
-func ScopedPathAgentIdentifierCandidates(scope string, identifier string) []string {
+// ScopedIdentifierCandidates returns the identifier variants accepted by
+// Harness path-based scoped endpoints, in preferred order.
+func ScopedIdentifierCandidates(scope string, identifier string) []string {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
 		return nil
@@ -82,8 +85,8 @@ func ScopedPathAgentIdentifierCandidates(scope string, identifier string) []stri
 	return candidates
 }
 
-// AgentIdentifiersEquivalent compares raw and scope-prefixed agent identifiers.
-func AgentIdentifiersEquivalent(scope string, left string, right string) bool {
+// IdentifiersEquivalent compares raw and scope-prefixed identifiers.
+func IdentifiersEquivalent(scope string, left string, right string) bool {
 	left = strings.TrimSpace(left)
 	right = strings.TrimSpace(right)
 	if left == "" || right == "" {
@@ -92,7 +95,7 @@ func AgentIdentifiersEquivalent(scope string, left string, right string) bool {
 	if left == right {
 		return true
 	}
-	for _, candidate := range ScopedPathAgentIdentifierCandidates(scope, right) {
+	for _, candidate := range ScopedIdentifierCandidates(scope, right) {
 		if left == candidate {
 			return true
 		}
