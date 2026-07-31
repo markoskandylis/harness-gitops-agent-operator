@@ -26,11 +26,16 @@ One controller-runtime manager runs two reconcilers:
 | Project Mapping | Resolve the Agent and target scopes, wait for the AppProject and healthy Agent, then create, verify, adopt, observe, or delete one Harness mapping. |
 
 The root `internal/controller/setup.go` is a small registration façade. Agent
-logic lives in `internal/controller/agent/`; Mapping logic lives in
-`internal/controller/projectmapping/`. Harness SDK session construction,
-Secret lookup, error handling, identifier candidates, Agent calls, Mapping
-calls, and readiness checks live behind the shared `internal/harness/`
-boundary.
+logic lives in `internal/resource/agent/`; Mapping logic lives in
+`internal/resource/projectmapping/`; each resource package owns its own
+Harness SDK calls in its `sdk.go`. Only the kind-agnostic core — session
+construction, response classification, identifier candidates — is shared
+behind `internal/harness/`.
+
+The Mapping reconciler never calls Harness Agent APIs. The Agent reconciler
+publishes a `Healthy` condition on the Agent CR (refreshed on its own resync),
+and every Mapping gates on that condition for its current generation before
+touching Harness.
 
 ```text
 HarnessGitopsAgent ──1:N──> HarnessGitopsProjectMapping ──1:1──> AppProject
@@ -362,13 +367,23 @@ kubectl -n hga-system logs deploy/hga-controller-harness-gitops-agent-controller
   --tail=200
 ```
 
+Agent `Healthy` condition (published by the Agent reconciler; Mappings gate on
+it):
+
+| Status/Reason | Meaning |
+|---|---|
+| `True`/`AgentHealthy` | Harness reports the agent CONNECTED and HEALTHY. |
+| `False`/`AgentUnhealthy` | Health was read successfully and the agent is not connected/healthy yet. |
+| `False`/`AgentAbsent` | Harness proved the agent does not exist. |
+| `Unknown`/`HealthUnreadable` | Health could not be READ at all — missing credentials or a transport/permission failure. Not the same as unhealthy. |
+
 Useful Mapping condition reasons:
 
 | Reason | Meaning |
 |---|---|
 | `AgentRefNotFound`, `AgentDeleting` | The referenced same-namespace Agent is absent or terminating. |
 | `AppProjectNotFound` | The named AppProject does not exist in the Mapping namespace. |
-| `AgentNotFound`, `AgentNotHealthy` | Harness has not observed the Agent as connected and healthy. |
+| `AgentNotFound`, `AgentNotHealthy` | The Agent CR's `Healthy` condition is not `True` for its current generation. |
 | `MappingMismatch`, `DuplicateMapping` | Existing remote rows are not an unambiguous complete-tuple match. |
 | `OwnershipConflict` | Another Mapping CR is the deterministic binding for this Harness Mapping ID. |
 | `AdoptionFailed` | `adoptMappingId` is absent remotely or does not match the complete tuple. |

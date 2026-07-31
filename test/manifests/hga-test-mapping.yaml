@@ -1,0 +1,26 @@
+# AppProject + Mapping travelling together — the same shape Git delivery uses.
+# The mapping waits at AppProjectNotFound until the AppProject exists, so
+# applying them in one file is naturally ordered by the controller, not by us.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: manifest-test
+  namespace: gitops-agent
+spec:
+  sourceRepos:
+    - "*"
+  destinations:
+    - server: "*"
+      namespace: "*"
+---
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsProjectMapping
+metadata:
+  name: manifest-test
+  namespace: gitops-agent
+spec:
+  agentRef:
+    name: agent-ref
+  appProject: manifest-test
+  # PROJECT scope: orgId/projectId are inherited from the referenced Agent.
+  autoCreateServiceEnv: false

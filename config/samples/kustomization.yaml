@@ -2,4 +2,5 @@
 resources:
 - infrastructure_v1_harnessgitopsagent.yaml
 - infrastructure_v1_harnessgitopsprojectmapping.yaml
+- infrastructure_v1_harnessgitopsappproject.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -1,0 +1,25 @@
+# Standalone Agent CR referencing an ALREADY-RUNNING agent
+# (existingAgentIdentifier). Ownership is External: this CR never creates,
+# credentials, or deletes anything in Harness — it only resolves the agent and
+# publishes its health for mappings to gate on.
+#
+# Replace every <...> placeholder before applying. The referenced agent must
+# already be running (for example, installed by the bootstrap chart).
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAgent
+metadata:
+  name: agent-ref
+  namespace: gitops-agent
+spec:
+  name: "<AGENT_NAME>"
+  identifier: "<EXISTING_AGENT_IDENTIFIER>"
+  existingAgentIdentifier: "<EXISTING_AGENT_IDENTIFIER>"
+  accountId: "<ACCOUNT_ID>"
+  orgId: "<ORG_ID>"
+  projectId: "<PROJECT_ID>"
+  operator: ARGO
+  scope: PROJECT
+  type: MANAGED_ARGO_PROVIDER
+  # Read from the controller-configured namespace, not this one.
+  apiKeySecretRef: harness-api-key-secret
+  # No tokenSecretRef: an existing agent already holds its credentials.

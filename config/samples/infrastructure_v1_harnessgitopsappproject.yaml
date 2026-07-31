@@ -1,0 +1,23 @@
+apiVersion: infrastructure.kandylis.co.uk/v1
+kind: HarnessGitopsAppProject
+metadata:
+  labels:
+    app.kubernetes.io/name: harness-gitops-agent-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: harnessappproject-example
+spec:
+  description: Sample Appproject
+  sourceRepos:
+  - '*'
+  destinations:
+  - namespace: '*'
+    server: '*'
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  agentRef:
+    name: harnessgitopsagent-sample
+

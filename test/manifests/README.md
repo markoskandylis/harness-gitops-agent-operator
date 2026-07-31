@@ -12,6 +12,8 @@ instead.
 | `project-agent.yaml` | PROJECT | Minimal project-level agent (`projectId` required) |
 | `org-agent.yaml` | ORG | Minimal org-level agent (no `projectId`) |
 | `org-agent-with-mapping.yaml` | ORG | Agent plus a separate AppProject → Harness project Mapping CR |
+| `hga-test-agent.yaml` | PROJECT | References an already-running agent via `existingAgentIdentifier` (External — never deleted by the controller) |
+| `hga-test-mapping.yaml` | PROJECT | AppProject + Mapping pair riding on the referenced agent's health |
 
 ## Flow
 
