@@ -111,20 +111,20 @@ func TestCRDLifecycleFlagsApplyToBothCRDs(t *testing.T) {
 	}
 }
 
-func TestAPIKeySecretNamespaceArgument(t *testing.T) {
+func TestManagedNamespacesArgument(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		extraArgs []string
 		want      string
 	}{
 		{
-			name: "defaults to release namespace",
-			want: "--api-key-secret-namespace=hga-system",
+			name: "defaults to no approved namespaces",
+			want: "--managed-namespaces=",
 		},
 		{
-			name:      "preserves explicit override",
-			extraArgs: []string{"--set", "manager.apiKeySecretNamespace=credential-system"},
-			want:      "--api-key-secret-namespace=credential-system",
+			name:      "passes explicit approval list",
+			extraArgs: []string{"--set-json", `manager.managedNamespaces=["team1-argo","platform-argo"]`},
+			want:      "--managed-namespaces=team1-argo,platform-argo",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -154,12 +154,39 @@ func TestAPIKeySecretNamespaceArgument(t *testing.T) {
 
 			var namespaceArgs []string
 			for _, arg := range args {
-				if strings.HasPrefix(arg, "--api-key-secret-namespace=") {
+				if strings.HasPrefix(arg, "--api-key-secret-namespace") {
+					t.Fatal("global credential override must never be rendered")
+				}
+				if strings.HasPrefix(arg, "--managed-namespaces=") {
 					namespaceArgs = append(namespaceArgs, arg)
 				}
 			}
 			if !reflect.DeepEqual(namespaceArgs, []string{test.want}) {
-				t.Fatalf("API key namespace args = %v, want [%s]", namespaceArgs, test.want)
+				t.Fatalf("managed namespace args = %v, want [%s]", namespaceArgs, test.want)
+			}
+		})
+	}
+}
+
+func TestChartRejectsInvalidPolicyAndRemovedGlobalCredentialSetting(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required for chart render tests")
+	}
+	for _, values := range []string{
+		`manager.managedNamespaces=["*"]`,
+		`manager.managedNamespaces=[""]`,
+		`manager.managedNamespaces=["valid","valid"]`,
+		`manager.managedNamespaces=["hga-system/other"]`,
+		`manager.apiKeySecretNamespace="hga-system"`,
+		`manager.apiKeySecretNamespace=""`,
+	} {
+		t.Run(values, func(t *testing.T) {
+			output, err := exec.Command("helm", "template", "chart-test", ".", "--set-json", values).CombinedOutput()
+			if err == nil {
+				t.Fatalf("invalid policy rendered successfully: %s", output)
+			}
+			if !strings.Contains(string(output), "schema") {
+				t.Fatalf("expected schema validation failure, got: %s", output)
 			}
 		})
 	}

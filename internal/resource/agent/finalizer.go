@@ -52,12 +52,7 @@ func (r *Reconciler) reconcileDeletion(
 		agentCreationIsUncertain(agentCR.Status.CreationState)
 	if verifyOwnership {
 		var err error
-		harnessSession, err = SessionForAgent(
-			ctx,
-			r.apiReader(),
-			r.APIKeySecretNamespace,
-			agentCR,
-		)
+		harnessSession, err = r.sessionForAgent(ctx, agentCR)
 		if err != nil {
 			log.Error(err, "Failed to initialize Harness session for Agent ownership verification; retaining finalizer")
 			return ctrl.Result{}, err
@@ -82,12 +77,7 @@ func (r *Reconciler) reconcileDeletion(
 	log.Info("Deleting agent from Harness Platform...")
 	if harnessSession == nil {
 		var err error
-		harnessSession, err = SessionForAgent(
-			ctx,
-			r.apiReader(),
-			r.APIKeySecretNamespace,
-			agentCR,
-		)
+		harnessSession, err = r.sessionForAgent(ctx, agentCR)
 		if err != nil {
 			// Keep finalizer until cleanup in Harness succeeds.
 			log.Error(err, "Failed to initialize Harness session for delete; retaining finalizer")
@@ -112,12 +102,7 @@ func (r *Reconciler) reconcileDeletion(
 		if isAgentNotFound(err) {
 			log.Info("Harness agent already absent, proceeding with finalizer removal", "agentIdentifier", agentIdentifier)
 		} else {
-			if body := harnessapi.ErrorBody(err); body != "" {
-				log.Error(err, "Failed to delete agent from Harness",
-					"body", body)
-			} else {
-				log.Error(err, "Failed to delete agent from Harness")
-			}
+			log.Error(err, "Failed to delete agent from Harness")
 			return ctrl.Result{}, err
 		}
 	}

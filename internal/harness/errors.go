@@ -29,31 +29,29 @@ type ResponseError struct {
 	ResourceDescription string
 	StatusCode          int
 	Verdict             Verdict
-	Err                 error
+	cause               error
 }
 
 func (e *ResponseError) Error() string {
 	if e.StatusCode != 0 {
 		return fmt.Sprintf(
-			"%s for %s failed with HTTP %d (%s): %v",
+			"%s for %s failed with HTTP %d (%s)",
 			e.Operation,
 			e.ResourceDescription,
 			e.StatusCode,
 			e.Verdict,
-			e.Err,
 		)
 	}
 	return fmt.Sprintf(
-		"%s for %s failed (%s): %v",
+		"%s for %s failed (%s)",
 		e.Operation,
 		e.ResourceDescription,
 		e.Verdict,
-		e.Err,
 	)
 }
 
 func (e *ResponseError) Unwrap() error {
-	return e.Err
+	return e.cause
 }
 
 // ClassifyResponse derives an API verdict from transport and HTTP state. Body
@@ -98,8 +96,9 @@ func VerdictOf(err error) Verdict {
 	return VerdictFailed
 }
 
-// ErrorBody returns a safe SDK response body for diagnostics.
-func ErrorBody(err error) string {
+// errorBody is for internal compatibility checks only. Provider bodies can
+// contain credentials; never return them to reconcilers, logs or status.
+func errorBody(err error) string {
 	var swaggerErr nextgen.GenericSwaggerError
 	if errors.As(err, &swaggerErr) {
 		return strings.TrimSpace(string(swaggerErr.Body()))
@@ -111,8 +110,23 @@ func ErrorBody(err error) string {
 	return ""
 }
 
-// APIError preserves an SDK error and its HTTP status while adding a resource
-// description suitable for controller diagnostics.
+// IsAlreadyExists supports the legacy HTTP 400 duplicate responses used by
+// Harness. Denied, absent and transient responses must keep their HTTP verdict,
+// regardless of misleading body text. Only a boolean leaves this boundary.
+func IsAlreadyExists(response *http.Response, err error, phrase string) bool {
+	if err == nil || response == nil {
+		return false
+	}
+	if response.StatusCode == http.StatusConflict {
+		return true
+	}
+	return response.StatusCode == http.StatusBadRequest && phrase != "" &&
+		strings.Contains(strings.ToLower(errorBody(err)), strings.ToLower(phrase))
+}
+
+// APIError exposes only operation, resource identity, HTTP status and verdict.
+// Keep the cause for errors.Is/As, but never format SDK bodies or transport
+// errors (which can contain URLs or credentials) into logs or CR status.
 func APIError(
 	operation string,
 	resourceDescription string,
@@ -122,11 +136,6 @@ func APIError(
 	if err == nil {
 		return nil
 	}
-	wrapped := err
-	if body := ErrorBody(err); body != "" {
-		wrapped = fmt.Errorf("%w (body: %s)", err, body)
-	}
-
 	statusCode := 0
 	if response != nil {
 		statusCode = response.StatusCode
@@ -136,6 +145,6 @@ func APIError(
 		ResourceDescription: resourceDescription,
 		StatusCode:          statusCode,
 		Verdict:             ClassifyResponse(response, err),
-		Err:                 wrapped,
+		cause:               err,
 	}
 }

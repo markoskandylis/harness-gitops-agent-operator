@@ -715,6 +715,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 				fixture.mappingAPI.onList = nil
 				persistDuplicateMappingClaim(t, fixture, winner)
 			}
+			fixture.reconciler.NamespacePolicy = mappingPolicyForObjects(t, agent, mapping, winner)
 
 			if _, err := fixture.reconcile(t); err != nil {
 				t.Fatalf("reconcile claim race: %v", err)

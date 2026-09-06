@@ -3,13 +3,11 @@ package harness
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
-	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // DefaultHTTPTimeout caps one Harness API round trip.
@@ -30,13 +28,32 @@ func NewSession(apiKey string) (*Session, error) {
 		return nil, fmt.Errorf("harness API key is empty")
 	}
 
+	return NewSessionWithClient(apiKey, nextgen.NewAPIClient(newSDKConfiguration()))
+}
+
+// newSDKConfiguration is the shared production transport policy for all APIs.
+func newSDKConfiguration() *nextgen.Configuration {
 	cfg := nextgen.NewConfiguration()
+	// Credentials come exclusively from the namespace-local session, never
+	// from the SDK's Terraform-oriented environment defaults.
+	cfg.ApiKey = ""
+	cfg.AccountId = ""
+	// Bypass the SDK's body-dumping debug transport (TF_LOG=DEBUG can expose
+	// private keys in responses). Share the standard connection pool between
+	// short-lived sessions; only controller-safe API errors are logged.
+	cfg.HTTPClient.Logger = nil
+	cfg.HTTPClient.HTTPClient.Transport = http.DefaultTransport
+	// x-api-key is a custom header that net/http can forward on redirects.
+	// Harness API redirects are not needed; never forward provisioning keys.
+	cfg.HTTPClient.HTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	// controller-runtime owns retries and rate limiting. SDK retries can block
 	// the sole reconcile worker for minutes during a Harness 5xx response.
 	cfg.HTTPClient.RetryMax = 0
 	cfg.HTTPClient.HTTPClient.Timeout = DefaultHTTPTimeout
 
-	return NewSessionWithClient(apiKey, nextgen.NewAPIClient(cfg))
+	return cfg
 }
 
 // NewSessionWithClient builds a session around a configured Harness SDK
@@ -51,29 +68,6 @@ func NewSessionWithClient(apiKey string, sdkClient *nextgen.APIClient) (*Session
 		return nil, fmt.Errorf("harness SDK client is nil")
 	}
 	return &Session{client: sdkClient, apiKey: apiKey}, nil
-}
-
-// SessionFromSecret constructs a session from a caller-resolved Kubernetes
-// Secret. Resource packages remain responsible for namespace and reference
-// policy.
-func SessionFromSecret(
-	ctx context.Context,
-	reader client.Reader,
-	key client.ObjectKey,
-) (*Session, error) {
-	if reader == nil {
-		return nil, fmt.Errorf("kubernetes Secret reader is nil")
-	}
-
-	secret := &corev1.Secret{}
-	if err := reader.Get(ctx, key, secret); err != nil {
-		return nil, err
-	}
-	apiKey, ok := secret.Data["api_key"]
-	if !ok || len(apiKey) == 0 {
-		return nil, k8serrors.NewBadRequest("api_key not found in secret")
-	}
-	return NewSession(string(apiKey))
 }
 
 // Client returns the configured Harness SDK client.

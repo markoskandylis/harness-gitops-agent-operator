@@ -737,10 +737,11 @@ func newAgentRegistrationFixture(
 
 	return &agentRegistrationFixture{
 		reconciler: &Reconciler{
-			Client:    statusClient,
-			APIReader: statusClient,
-			Scheme:    scheme,
-			agentAPI:  agentAPI,
+			NamespacePolicy: policyForTest(t, agent.Namespace),
+			Client:          statusClient,
+			APIReader:       statusClient,
+			Scheme:          scheme,
+			agentAPI:        agentAPI,
 		},
 		client:   statusClient,
 		agentAPI: agentAPI,

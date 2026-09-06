@@ -6,7 +6,7 @@ revisionHistoryLimit: 5
 
 image:
   repository: mkandylis/harness-gitops-agent-operator
-  tag: v0.5.0
+  tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -31,9 +31,9 @@ leaderElection:
   enabled: true
 
 manager:
-  # Empty uses the controller Helm release namespace. Set an explicit namespace
-  # only when API key Secrets are managed somewhere else.
-  apiKeySecretNamespace: ""
+  # Explicit instance namespaces only; empty denies all management requests.
+  # API-key Secrets must exist beside their Agent CRs. No global fallback.
+  managedNamespaces: []
   appProjectPendingRetryInterval: 20s
   harnessMappingResyncInterval: 5m
   healthProbe:

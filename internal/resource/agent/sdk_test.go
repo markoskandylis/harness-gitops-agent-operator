@@ -9,12 +9,39 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
+
+func TestSDKAgentCreateSanitizesDeniedAndUncertainErrors(t *testing.T) {
+	for _, code := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			session := testSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"message":"agent already exists","privateKey":"sensitive-test-token"}`, code)
+			}))
+			_, err := (SDKAgentAPI{}).Create(context.Background(), session, CreateAgentRequest{
+				Agent: Agent{Identifier: "test-agent", AccountIdentifier: "test-account", Scope: "ACCOUNT"},
+			})
+			if err == nil || strings.Contains(err.Error(), "sensitive-test-token") || errors.Is(err, ErrAgentAlreadyExists) {
+				t.Fatalf("unsafe or misclassified Agent create error: %v", err)
+			}
+			want := harnessapi.VerdictDenied
+			if code == http.StatusServiceUnavailable {
+				want = harnessapi.VerdictTransient
+				if !errors.Is(err, ErrAgentCreateOutcomeUnknown) {
+					t.Fatal("transient create lost uncertain-outcome handling")
+				}
+			}
+			if harnessapi.VerdictOf(err) != want {
+				t.Fatal("Agent create lost its authoritative API verdict")
+			}
+		})
+	}
+}
 
 func TestSDKAgentLookupUsesScopedPathCandidatesAndQueries(t *testing.T) {
 	tests := []struct {

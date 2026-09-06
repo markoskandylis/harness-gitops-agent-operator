@@ -30,6 +30,7 @@ import (
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 )
 
 type projectMappingSelection struct {
@@ -277,14 +278,7 @@ func (r *Reconciler) sessionForAgent(
 	ctx context.Context,
 	agent *infrastructurev1.HarnessGitopsAgent,
 ) (*harnessapi.Session, error) {
-	secretNamespace := strings.TrimSpace(r.APIKeySecretNamespace)
-	if secretNamespace == "" {
-		secretNamespace = agent.Namespace
-	}
-	return harnessapi.SessionFromSecret(ctx, r.apiReader(), client.ObjectKey{
-		Name:      agent.Spec.ApiKeySecretRef,
-		Namespace: secretNamespace,
-	})
+	return resourceutil.SessionForAgent(ctx, r.apiReader(), r.NamespacePolicy, agent)
 }
 
 func (r *Reconciler) projectMappingAPI() mappingReconcileAPI {

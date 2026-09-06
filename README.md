@@ -16,6 +16,13 @@ its own readiness, remote identity, ownership, and cleanup lifecycle.
 The editable architecture diagram is in
 [docs/architecture.drawio](docs/architecture.drawio).
 
+The target architecture is one platform operator deploying and maintaining
+GitOps instances for administrators and tenants. Tenants consume Argo CD;
+organization-owned operators are a secondary exception. See
+[Operator-managed GitOps instances](docs/operator-tenancy-architecture.md)
+for the product boundaries and implementation stages. Runtime deployment by
+the operator is proposed functionality, not a feature of the current release.
+
 ## Architecture
 
 One controller-runtime manager runs two reconcilers:

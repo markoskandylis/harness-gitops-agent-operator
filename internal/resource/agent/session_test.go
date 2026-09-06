@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 	apiKeyTestSecretName          = "harness-api-key-secret"
 )
 
-func TestHarnessClientUsesConfiguredAPIKeySecretNamespace(t *testing.T) {
+func TestHarnessClientCannotUseControllerNamespaceSecret(t *testing.T) {
 	reader := newAPIKeyNamespaceTestReader(t, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apiKeyTestSecretName,
@@ -29,13 +30,13 @@ func TestHarnessClientUsesConfiguredAPIKeySecretNamespace(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	if _, err := SessionForAgent(
+	if _, err := resourceutil.SessionForAgent(
 		context.Background(),
 		reader,
-		apiKeyTestControllerNamespace,
+		policyForTest(t, apiKeyTestAgentNamespace),
 		newAPIKeyNamespaceTestAgent(),
-	); err != nil {
-		t.Fatalf("get Harness client from configured Secret namespace: %v", err)
+	); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected missing local Secret, never the controller Secret: %v", err)
 	}
 }
 
@@ -48,17 +49,17 @@ func TestHarnessClientDefaultsAPIKeySecretToAgentNamespace(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	if _, err := SessionForAgent(
+	if _, err := resourceutil.SessionForAgent(
 		context.Background(),
 		reader,
-		"",
+		policyForTest(t, apiKeyTestAgentNamespace),
 		newAPIKeyNamespaceTestAgent(),
 	); err != nil {
 		t.Fatalf("get Harness client from agent Secret namespace: %v", err)
 	}
 }
 
-func TestConfiguredAPIKeySecretNamespaceDoesNotFallBack(t *testing.T) {
+func TestUnapprovedNamespaceCannotUseItsOwnKey(t *testing.T) {
 	reader := newAPIKeyNamespaceTestReader(t, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      apiKeyTestSecretName,
@@ -67,15 +68,24 @@ func TestConfiguredAPIKeySecretNamespaceDoesNotFallBack(t *testing.T) {
 		Data: map[string][]byte{"api_key": []byte("test-api-key")},
 	})
 
-	_, err := SessionForAgent(
+	_, err := resourceutil.SessionForAgent(
 		context.Background(),
 		reader,
-		apiKeyTestControllerNamespace,
+		policyForTest(t, apiKeyTestControllerNamespace),
 		newAPIKeyNamespaceTestAgent(),
 	)
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("expected configured Secret namespace to be authoritative, got %v", err)
+	if err == nil || apierrors.IsNotFound(err) {
+		t.Fatalf("expected namespace denial before credential lookup, got %v", err)
 	}
+}
+
+func policyForTest(t *testing.T, namespaces ...string) resourceutil.NamespacePolicy {
+	t.Helper()
+	policy, err := resourceutil.NewNamespacePolicy(namespaces)
+	if err != nil {
+		t.Fatalf("configure test namespace policy: %v", err)
+	}
+	return policy
 }
 
 func newAPIKeyNamespaceTestReader(

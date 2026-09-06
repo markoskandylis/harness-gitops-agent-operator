@@ -91,7 +91,7 @@ type mappingReconcileAPI interface {
 type Reconciler struct {
 	client.Client
 	APIReader                      client.Reader
-	APIKeySecretNamespace          string
+	NamespacePolicy                resourceutil.NamespacePolicy
 	AppProjectPendingRetryInterval time.Duration
 	HarnessMappingResyncInterval   time.Duration
 
@@ -106,6 +106,10 @@ func (r *Reconciler) Reconcile(
 	mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
 	if err := r.Get(ctx, req.NamespacedName, mapping); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if !r.NamespacePolicy.Allows(mapping.Namespace) {
+		return ctrl.Result{}, r.setReady(ctx, mapping, metav1.ConditionFalse,
+			resourceutil.NamespaceNotAllowed, resourceutil.NamespaceDeniedMessage(mapping.Namespace), nil)
 	}
 
 	if !mapping.DeletionTimestamp.IsZero() {

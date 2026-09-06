@@ -92,7 +92,8 @@ func (SDKAgentAPI) Create(
 			return CreateAgentResult{}, fmt.Errorf("%w: %q", ErrAgentAlreadyExists, strings.TrimSpace(request.Identifier))
 		}
 		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictTransient {
-			return CreateAgentResult{}, fmt.Errorf("%w: %w", ErrAgentCreateOutcomeUnknown, err)
+			return CreateAgentResult{}, fmt.Errorf("%w: %w", ErrAgentCreateOutcomeUnknown,
+				agentAPIError("create GitOps agent", request.Identifier, httpResponse, err))
 		}
 		return CreateAgentResult{}, agentAPIError(
 			"create GitOps agent",
@@ -329,8 +330,7 @@ func cloneTags(tags map[string]string) map[string]string {
 }
 
 func isAgentAlreadyExists(response *http.Response, err error) bool {
-	return harnessapi.ClassifyResponse(response, err) == harnessapi.VerdictConflict ||
-		strings.Contains(strings.ToLower(harnessapi.ErrorBody(err)), "agent already exists")
+	return harnessapi.IsAlreadyExists(response, err, "agent already exists")
 }
 
 func isAgentNotFound(err error) bool {

@@ -87,9 +87,16 @@
     "manager": {
       "type": "object",
       "properties": {
-        "apiKeySecretNamespace": {
-          "type": "string",
-          "description": "Namespace containing API key Secrets. Empty resolves to the controller Helm release namespace."
+        "apiKeySecretNamespace": false,
+        "managedNamespaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          },
+          "description": "Explicit approved instance namespaces. Empty denies all. API keys are always read from the Agent CR namespace."
         },
         "appProjectPendingRetryInterval": {
           "type": "string",
@@ -146,7 +153,7 @@
           "type": "array"
         }
       },
-      "required": ["apiKeySecretNamespace", "appProjectPendingRetryInterval", "harnessMappingResyncInterval", "healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
+      "required": ["managedNamespaces", "appProjectPendingRetryInterval", "harnessMappingResyncInterval", "healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
     },
     "enableServiceLinks": {
       "type": "boolean"

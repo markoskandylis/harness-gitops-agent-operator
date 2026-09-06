@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
 )
 
@@ -115,25 +116,25 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 			By("Cleanup the specific resource instance HarnessGitopsAgent")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-		It("should return an error when API key secret is missing", func() {
+		It("reports a missing local key without adding a finalizer", func() {
 			By("Reconciling the created resource")
+			policy, policyErr := resourceutil.NewNamespacePolicy([]string{typeNamespacedName.Namespace})
+			Expect(policyErr).NotTo(HaveOccurred())
 			controllerReconciler := &agentcontroller.Reconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				NamespacePolicy: policy,
+				Client:          k8sClient,
+				Scheme:          k8sClient.Scheme(),
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.IsZero()).To(BeFalse(), "the finalizer pass must explicitly requeue")
-
-			// First reconcile adds the finalizer and requeues. Second reconcile executes create path.
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("not found"))
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			current := &infrastructurev1.HarnessGitopsAgent{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, current)).To(Succeed())
+			Expect(current.Finalizers).To(BeEmpty())
+			Expect(current.Status.Conditions).To(ContainElement(HaveField("Reason", "CredentialsUnavailable")))
 		})
 	})
 })

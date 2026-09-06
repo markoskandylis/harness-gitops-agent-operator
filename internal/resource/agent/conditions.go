@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -17,17 +18,39 @@ import (
 )
 
 const (
-	harnessAgentReadyCondition           = "Ready"
-	harnessAgentHealthyCondition         = "Healthy"
-	harnessAgentReasonWaitingForMappings = "WaitingForMappings"
-	harnessAgentReasonHealthy            = "AgentHealthy"
-	harnessAgentReasonUnhealthy          = "AgentUnhealthy"
-	harnessAgentReasonAbsent             = "AgentAbsent"
-	harnessAgentReasonHealthUnreadable   = "HealthUnreadable"
+	harnessAgentReadyCondition               = "Ready"
+	harnessAgentHealthyCondition             = "Healthy"
+	harnessAgentReasonWaitingForMappings     = "WaitingForMappings"
+	harnessAgentReasonHealthy                = "AgentHealthy"
+	harnessAgentReasonUnhealthy              = "AgentUnhealthy"
+	harnessAgentReasonAbsent                 = "AgentAbsent"
+	harnessAgentReasonHealthUnreadable       = "HealthUnreadable"
+	harnessAgentReasonCredentialsUnavailable = "CredentialsUnavailable"
+	harnessAgentReasonTokenSecretUnavailable = "TokenSecretUnavailable"
 
 	agentHealthFastResync            = 30 * time.Second
 	DefaultAgentHealthResyncInterval = 5 * time.Minute
 )
+
+func (r *Reconciler) tokenSecretUnavailable(
+	ctx context.Context,
+	agent *infrastructurev1.HarnessGitopsAgent,
+	cause error,
+) (ctrl.Result, error) {
+	statusErr := r.setAgentCondition(ctx, agent, harnessAgentHealthyCondition,
+		metav1.ConditionUnknown, harnessAgentReasonTokenSecretUnavailable,
+		"Unable to use the namespace-local token Secret; check its name, ownership and access permissions")
+	// Preserve controller-runtime's error backoff and any optimistic-lock conflict.
+	return ctrl.Result{}, errors.Join(cause, statusErr)
+}
+
+func (r *Reconciler) credentialsUnavailable(ctx context.Context, agent *infrastructurev1.HarnessGitopsAgent) (ctrl.Result, error) {
+	// Do not put credential contents or provider error bodies into status.
+	err := r.setAgentCondition(ctx, agent, harnessAgentHealthyCondition,
+		metav1.ConditionUnknown, harnessAgentReasonCredentialsUnavailable,
+		"Unable to read a usable API-key Secret in the Agent namespace; no Harness operation was attempted")
+	return ctrl.Result{RequeueAfter: agentHealthFastResync}, err
+}
 
 func readinessFromAgent(agent nextgen.V1Agent) AgentReadiness {
 	readiness := AgentReadiness{Exists: true}
@@ -72,12 +95,7 @@ func (r *Reconciler) refreshAgentHealth(
 	agentCR *infrastructurev1.HarnessGitopsAgent,
 	agentIdentifier string,
 ) (ctrl.Result, error) {
-	session, err := SessionForAgent(
-		ctx,
-		r.apiReader(),
-		r.APIKeySecretNamespace,
-		agentCR,
-	)
+	session, err := r.sessionForAgent(ctx, agentCR)
 	return r.agentHealthResult(ctx, agentCR, session, agentIdentifier, err)
 }
 

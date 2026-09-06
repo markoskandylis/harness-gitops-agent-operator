@@ -8,12 +8,37 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
+
+func TestSDKMappingCreateSanitizesDeniedAndUncertainErrors(t *testing.T) {
+	for _, code := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"message":"already exists","privateKey":"sensitive-test-token"}`, code)
+			}))
+			_, err := (SDKProjectMappingAPI{}).Create(context.Background(), session, sdkMappingTestRequest())
+			if err == nil || strings.Contains(err.Error(), "sensitive-test-token") || errors.Is(err, ErrProjectMappingAlreadyExists) {
+				t.Fatalf("unsafe or misclassified Mapping create error: %v", err)
+			}
+			want := harnessapi.VerdictDenied
+			if code == http.StatusServiceUnavailable {
+				want = harnessapi.VerdictTransient
+				if !errors.Is(err, ErrProjectMappingCreateOutcomeUnknown) {
+					t.Fatal("transient create lost uncertain-outcome handling")
+				}
+			}
+			if harnessapi.VerdictOf(err) != want {
+				t.Fatal("Mapping create lost its authoritative API verdict")
+			}
+		})
+	}
+}
 
 func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) {
 	var paths []string
