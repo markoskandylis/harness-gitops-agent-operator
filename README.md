@@ -255,26 +255,24 @@ For a controller-created Agent, the controller writes the Secret named by
 GITOPS_AGENT_TOKEN
 ```
 
-For most installations, keep API credentials in the controller namespace:
+Every API key lives beside its Agent CR. The controller reads
+`spec.apiKeySecretRef` only from the Agent's own namespace, and only when that
+namespace is listed in `manager.managedNamespaces`. There is no central key
+namespace and no fallback. Give each instance namespace a key from a Harness
+service account scoped to what that namespace may manage:
 
 ```sh
-kubectl create namespace hga-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n hga-system create secret generic harness-api-key-secret \
+kubectl create namespace gitops-agent --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n gitops-agent create secret generic harness-api-key-secret \
   --from-literal=api_key="$HARNESS_API_KEY"
 ```
 
-When the controller Helm chart is installed in `hga-system`, leaving
-`manager.apiKeySecretNamespace` empty resolves it to `hga-system`. Every Agent
-still selects a Secret by name, but the controller reads that name from the
-controller release namespace. Set an explicit value only to use a different
-central namespace. Token Secrets remain beside their Agent runtimes.
-Centralizing the API key also keeps cleanup credentials available while a
-workload namespace is being removed.
-
-When running the controller binary directly, omitting
-`--api-key-secret-namespace` retains the binary's namespaced behavior and reads
-each API key Secret from its Agent namespace. Never put API keys or generated
-Agent tokens in Helm values or committed manifests.
+Token Secrets are written beside their Agent runtimes in the same namespace.
+Delete Agent and Mapping CRs before deleting a namespace, because the
+finalizers need the key to clean up in Harness. The Harness API gateway is
+pinned by `manager.harnessEndpoint`; the pod environment cannot change it.
+Never put API keys or generated Agent tokens in Helm values or committed
+manifests.
 
 ## Installation
 
@@ -294,7 +292,7 @@ helm upgrade --install hga-controller \
   charts/harness-gitops-agent-controller \
   --namespace hga-system \
   --create-namespace \
-  --set manager.apiKeySecretNamespace=hga-system \
+  --set 'manager.managedNamespaces={gitops-agent}' \
   --wait
 ```
 

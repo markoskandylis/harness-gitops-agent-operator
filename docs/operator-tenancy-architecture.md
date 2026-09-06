@@ -91,8 +91,10 @@ For tenant-scoped registrations, preserve the earlier requirement to select
 an org/project-restricted Harness credential. Platform administrators provision
 or reference that credential; tenants need not receive it or submit it to the
 operator. There may be several protected keys, selected by platform-owned
-instance configuration. A registration key remains in the protected credential
-namespace; only the generated agent token belongs in the instance namespace.
+instance configuration. Each instance namespace holds its own scoped
+registration key beside the Agent CR, and the controller reads keys only from
+namespaces the platform has approved; the generated agent token is written to
+the same namespace.
 
 | Instance type | Kubernetes runtime authority | Harness scope |
 |---|---|---|
@@ -134,7 +136,7 @@ Define and test both entry paths:
   design choice; unrestricted app-of-apps is not an isolation mechanism.
 
 Bound project selection, generator overrides, generator Secret references and
-destination selection. Keep platform keys out of tenant instance namespaces
+destination selection. Keep account-scoped platform keys out of tenant instance namespaces
 and avoid a permissive default project. ApplicationSet generation can expose
 credentials or select privileged projects, so basic login/RBAC alone is not
 the complete boundary. [Argo ApplicationSet security guidance](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Security/).

@@ -90,7 +90,7 @@ func (f errorTestTransport) RoundTrip(req *http.Request) (*http.Response, error)
 // Obtain a real SDK error without network access or constructing private SDK fields.
 func sdkResponseError(t *testing.T, code int, body string) (*http.Response, error) {
 	t.Helper()
-	cfg := newSDKConfiguration()
+	cfg := newSDKConfiguration(DefaultEndpoint)
 	cfg.HTTPClient.HTTPClient.Transport = errorTestTransport(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: code, Status: http.StatusText(code), Request: req,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,31 +14,70 @@ import (
 // DefaultHTTPTimeout caps one Harness API round trip.
 const DefaultHTTPTimeout = 60 * time.Second
 
+// DefaultEndpoint is the Harness API gateway used when no endpoint is configured.
+const DefaultEndpoint = "https://app.harness.io/gateway"
+
+// ValidateEndpoint accepts only an absolute http(s) base URL without embedded
+// credentials, query, or fragment. The controller owns this value; it must
+// never be taken from the pod environment.
+func ValidateEndpoint(endpoint string) error {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return fmt.Errorf("harness endpoint is not a valid URL: %w", err)
+	}
+	switch {
+	case parsed.Scheme != "https" && parsed.Scheme != "http":
+		return fmt.Errorf("harness endpoint must use http or https")
+	case parsed.Host == "":
+		return fmt.Errorf("harness endpoint must include a host")
+	case parsed.User != nil:
+		return fmt.Errorf("harness endpoint must not embed credentials")
+	case parsed.RawQuery != "" || parsed.Fragment != "":
+		return fmt.Errorf("harness endpoint must not include a query or fragment")
+	}
+	return nil
+}
+
 // Session contains the configured Harness SDK client and API key.
 type Session struct {
 	client *nextgen.APIClient
 	apiKey string
 }
 
-// NewSession builds a Harness SDK session from an API key supplied by the
-// controller. Kubernetes Secret lookup and namespace policy stay outside this
-// leaf package.
+// NewSession builds a session against DefaultEndpoint. Kubernetes Secret
+// lookup and namespace policy stay outside this leaf package.
 func NewSession(apiKey string) (*Session, error) {
+	return NewSessionWithEndpoint(apiKey, DefaultEndpoint)
+}
+
+// NewSessionWithEndpoint builds a session against an explicit Harness API
+// gateway. An empty endpoint means DefaultEndpoint.
+func NewSessionWithEndpoint(apiKey string, endpoint string) (*Session, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil, fmt.Errorf("harness API key is empty")
 	}
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	if err := ValidateEndpoint(endpoint); err != nil {
+		return nil, err
+	}
 
-	return NewSessionWithClient(apiKey, nextgen.NewAPIClient(newSDKConfiguration()))
+	return NewSessionWithClient(apiKey, nextgen.NewAPIClient(newSDKConfiguration(endpoint)))
 }
 
 // newSDKConfiguration is the shared production transport policy for all APIs.
-func newSDKConfiguration() *nextgen.Configuration {
+func newSDKConfiguration(endpoint string) *nextgen.Configuration {
 	cfg := nextgen.NewConfiguration()
 	// Credentials come exclusively from the namespace-local session, never
 	// from the SDK's Terraform-oriented environment defaults.
 	cfg.ApiKey = ""
 	cfg.AccountId = ""
+	// The SDK seeds BasePath from HARNESS_ENDPOINT. The controller owns the
+	// endpoint, so the pod environment can never redirect provisioning keys.
+	cfg.BasePath = endpoint
 	// Bypass the SDK's body-dumping debug transport (TF_LOG=DEBUG can expose
 	// private keys in responses). Share the standard connection pool between
 	// short-lived sessions; only controller-safe API errors are logged.

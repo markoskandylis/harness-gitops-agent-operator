@@ -43,6 +43,7 @@ import (
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 	"github.com/markoskandylis/harness-gitops-agent-operator/internal/controller"
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 	// +kubebuilder:scaffold:imports
 )
@@ -69,6 +70,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var managedNamespaces string
+	var harnessEndpoint string
 	var appProjectPendingRetryInterval time.Duration
 	var harnessMappingResyncInterval time.Duration
 	var tlsOpts []func(*tls.Config)
@@ -95,6 +97,12 @@ func main() {
 		"",
 		"Comma-separated approved agent/mapping namespaces. Empty denies all; wildcards are not supported. "+
 			"Credentials are always namespace-local.",
+	)
+	flag.StringVar(
+		&harnessEndpoint,
+		"harness-api-endpoint",
+		harnessapi.DefaultEndpoint,
+		"Harness API gateway base URL. Pinned by configuration so the pod environment cannot redirect requests.",
 	)
 	flag.DurationVar(
 		&appProjectPendingRetryInterval,
@@ -127,6 +135,11 @@ func main() {
 	if len(namespaces) == 0 {
 		setupLog.Info("No namespaces approved; all agent and mapping requests will be refused")
 	}
+	if err := harnessapi.ValidateEndpoint(harnessEndpoint); err != nil {
+		setupLog.Error(err, "invalid Harness API endpoint")
+		os.Exit(1)
+	}
+	setupLog.Info("configured Harness API endpoint", "endpoint", harnessEndpoint)
 	if err := controller.ValidateMappingIntervals(
 		appProjectPendingRetryInterval,
 		harnessMappingResyncInterval,
@@ -240,6 +253,7 @@ func main() {
 
 	if err := controller.SetupWithManager(mgr, controller.Options{
 		ManagedNamespaces:              namespaces,
+		HarnessEndpoint:                harnessEndpoint,
 		AppProjectPendingRetryInterval: appProjectPendingRetryInterval,
 		HarnessMappingResyncInterval:   harnessMappingResyncInterval,
 	}); err != nil {

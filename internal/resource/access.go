@@ -53,11 +53,14 @@ func NamespaceDeniedMessage(namespace string) string {
 // SessionForAgent is the sole credential-resolution path for both controllers,
 // including health, token recovery and finalization. There is no cross-namespace
 // override or fallback. Recheck policy here even after the reconcile entry gate.
+// endpoint is the platform-configured Harness API gateway; empty selects the
+// default gateway. It is never read from the CR or the pod environment.
 func SessionForAgent(
 	ctx context.Context,
 	reader client.Reader,
 	policy NamespacePolicy,
 	agent *infrastructurev1.HarnessGitopsAgent,
+	endpoint string,
 ) (*harnessapi.Session, error) {
 	if agent == nil {
 		return nil, fmt.Errorf("HarnessGitopsAgent is required for credential resolution")
@@ -83,5 +86,5 @@ func SessionForAgent(
 	if apiKey == "" {
 		return nil, k8serrors.NewBadRequest("api_key is missing or empty in the namespace-local Secret")
 	}
-	return harnessapi.NewSession(apiKey)
+	return harnessapi.NewSessionWithEndpoint(apiKey, endpoint)
 }

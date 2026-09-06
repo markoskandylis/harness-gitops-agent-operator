@@ -168,6 +168,55 @@ func TestManagedNamespacesArgument(t *testing.T) {
 	}
 }
 
+func controllerArgs(t *testing.T, extraArgs ...string) []string {
+	t.Helper()
+	rendered := decodeYAMLDocuments(t, helmTemplate(t, extraArgs...))
+	deployment := findObjectByKindSuffix(t, rendered, "Deployment", "-harness-gitops-agent-controller")
+	containers, found, err := unstructured.NestedSlice(deployment, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) != 1 {
+		t.Fatalf("controller containers = %v (found=%v): %v", containers, found, err)
+	}
+	container, ok := containers[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("controller container has type %T, want map", containers[0])
+	}
+	args, found, err := unstructured.NestedStringSlice(container, "args")
+	if err != nil || !found {
+		t.Fatalf("read controller args (found=%v): %v", found, err)
+	}
+	return args
+}
+
+func TestHarnessEndpointArgument(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		extraArgs []string
+		want      string
+	}{
+		{
+			name: "defaults to the Harness gateway",
+			want: "--harness-api-endpoint=https://app.harness.io/gateway",
+		},
+		{
+			name:      "passes an explicit endpoint",
+			extraArgs: []string{"--set", "manager.harnessEndpoint=https://app3.harness.io/gateway"},
+			want:      "--harness-api-endpoint=https://app3.harness.io/gateway",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var endpointArgs []string
+			for _, arg := range controllerArgs(t, test.extraArgs...) {
+				if strings.HasPrefix(arg, "--harness-api-endpoint=") {
+					endpointArgs = append(endpointArgs, arg)
+				}
+			}
+			if !reflect.DeepEqual(endpointArgs, []string{test.want}) {
+				t.Fatalf("endpoint args = %v, want [%s]", endpointArgs, test.want)
+			}
+		})
+	}
+}
+
 func TestChartRejectsInvalidPolicyAndRemovedGlobalCredentialSetting(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is required for chart render tests")
@@ -179,6 +228,8 @@ func TestChartRejectsInvalidPolicyAndRemovedGlobalCredentialSetting(t *testing.T
 		`manager.managedNamespaces=["hga-system/other"]`,
 		`manager.apiKeySecretNamespace="hga-system"`,
 		`manager.apiKeySecretNamespace=""`,
+		`manager.harnessEndpoint="app.harness.io/gateway"`,
+		`manager.harnessEndpoint="https://user:secret@app.harness.io/gateway"`,
 	} {
 		t.Run(values, func(t *testing.T) {
 			output, err := exec.Command("helm", "template", "chart-test", ".", "--set-json", values).CombinedOutput()

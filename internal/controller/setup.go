@@ -21,7 +21,9 @@ const (
 
 // Options contains shared configuration for both resource controllers.
 type Options struct {
-	ManagedNamespaces              []string
+	ManagedNamespaces []string
+	// HarnessEndpoint is the Harness API gateway; empty selects the default.
+	HarnessEndpoint                string
 	AppProjectPendingRetryInterval time.Duration
 	HarnessMappingResyncInterval   time.Duration
 }
@@ -41,6 +43,7 @@ func SetupWithManager(mgr ctrl.Manager, options Options) error {
 		Client:                         mgr.GetClient(),
 		APIReader:                      mgr.GetAPIReader(),
 		NamespacePolicy:                policy,
+		HarnessEndpoint:                options.HarnessEndpoint,
 		AppProjectPendingRetryInterval: options.AppProjectPendingRetryInterval,
 		HarnessMappingResyncInterval:   options.HarnessMappingResyncInterval,
 	}).SetupWithManager(mgr); err != nil {
@@ -52,6 +55,7 @@ func SetupWithManager(mgr ctrl.Manager, options Options) error {
 		APIReader:       mgr.GetAPIReader(),
 		Scheme:          mgr.GetScheme(),
 		NamespacePolicy: policy,
+		HarnessEndpoint: options.HarnessEndpoint,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up HarnessGitopsAgent controller: %w", err)
 	}

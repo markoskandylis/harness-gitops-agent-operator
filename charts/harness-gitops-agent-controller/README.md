@@ -58,12 +58,13 @@ kubectl delete crd \
 | `crds.keep` | bool | `true` | Annotate both CRDs with `helm.sh/resource-policy: keep` so `helm uninstall` never deletes them. |
 | `replicaCount` | int | `1` | Controller replicas. Use `>= 2` with a PDB for HA. |
 | `image.repository` | string | `mkandylis/harness-gitops-agent-operator` | Controller image repository. |
-| `image.tag` | string | `v0.5.0` | Image tag. Pin to an immutable tag in production. |
+| `image.tag` | string | `""` | Image tag. Empty falls back to the chart `appVersion`; pin to an immutable tag in production. |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
 | `rbac.create` | bool | `true` | Create the controller ClusterRole and binding. |
 | `serviceAccount.create` | bool | `true` | Create the controller ServiceAccount. |
 | `leaderElection.enabled` | bool | `true` | Enable leader election (required for HA). |
-| `manager.apiKeySecretNamespace` | string | `""` | Namespace to read each `apiKeySecretRef` from. Empty resolves to the controller Helm release namespace. |
+| `manager.managedNamespaces` | list | `[]` | Namespaces whose Agent and Mapping CRs the controller manages. Each API key is read from the CR's own namespace. Empty refuses everything. |
+| `manager.harnessEndpoint` | string | `https://app.harness.io/gateway` | Harness API gateway base URL, pinned so the pod environment cannot redirect requests. |
 | `manager.appProjectPendingRetryInterval` | string | `20s` | Requeue interval while an AppProject/agent is not yet ready. |
 | `manager.harnessMappingResyncInterval` | string | `5m` | Interval to re-verify a ready mapping against Harness. |
 | `manager.metrics.bindAddress` | string | `"0"` | Metrics bind address (`"0"` disables the endpoint). |
@@ -81,6 +82,6 @@ nodeSelector, tolerations, affinity, topology spread).
 - Pin `image.tag` to an immutable tag.
 - Set `manager.zapDevelopment=false` for JSON logs.
 - HA: `replicaCount >= 2`, `podDisruptionBudget.enabled=true`, `leaderElection.enabled=true`.
-- Keep `manager.apiKeySecretNamespace` empty to read API keys from the
-  controller Helm release namespace, or set an explicit central namespace.
-  This keeps cleanup credentials independent of workload namespace deletion.
+- List every instance namespace in `manager.managedNamespaces` and place a
+  scoped Harness key beside each Agent CR. Delete Agent and Mapping CRs before
+  deleting their namespace, because the finalizers need that key for cleanup.

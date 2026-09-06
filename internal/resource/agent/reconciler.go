@@ -54,6 +54,7 @@ type Reconciler struct {
 	Scheme                    *runtime.Scheme
 	APIReader                 client.Reader
 	NamespacePolicy           resourceutil.NamespacePolicy
+	HarnessEndpoint           string
 	AgentHealthResyncInterval time.Duration
 	agentAPI                  agentAPI
 }
@@ -247,7 +248,7 @@ func (r *Reconciler) sessionForAgent(
 	ctx context.Context,
 	agent *infrastructurev1.HarnessGitopsAgent,
 ) (*harnessapi.Session, error) {
-	return resourceutil.SessionForAgent(ctx, r.apiReader(), r.NamespacePolicy, agent)
+	return resourceutil.SessionForAgent(ctx, r.apiReader(), r.NamespacePolicy, agent, r.HarnessEndpoint)
 }
 
 // SetupWithManager registers the Agent controller and its dependent watches.

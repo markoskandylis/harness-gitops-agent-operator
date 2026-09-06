@@ -92,6 +92,7 @@ type Reconciler struct {
 	client.Client
 	APIReader                      client.Reader
 	NamespacePolicy                resourceutil.NamespacePolicy
+	HarnessEndpoint                string
 	AppProjectPendingRetryInterval time.Duration
 	HarnessMappingResyncInterval   time.Duration
 

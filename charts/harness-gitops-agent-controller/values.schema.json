@@ -98,6 +98,11 @@
           },
           "description": "Explicit approved instance namespaces. Empty denies all. API keys are always read from the Agent CR namespace."
         },
+        "harnessEndpoint": {
+          "type": "string",
+          "pattern": "^https?://[^ ?#@]+$",
+          "description": "Harness API gateway base URL. Pinned by configuration so the pod environment cannot redirect requests."
+        },
         "appProjectPendingRetryInterval": {
           "type": "string",
           "minLength": 2
@@ -153,7 +158,7 @@
           "type": "array"
         }
       },
-      "required": ["managedNamespaces", "appProjectPendingRetryInterval", "harnessMappingResyncInterval", "healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
+      "required": ["managedNamespaces", "harnessEndpoint", "appProjectPendingRetryInterval", "harnessMappingResyncInterval", "healthProbe", "metrics", "enableHTTP2", "zapDevelopment", "extraArgs", "env", "envFrom"]
     },
     "enableServiceLinks": {
       "type": "boolean"

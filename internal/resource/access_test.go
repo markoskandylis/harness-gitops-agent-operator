@@ -77,7 +77,7 @@ func TestCredentialResolutionUsesOnlyApprovedLocalSecretAndReloadsRotation(t *te
 		if err := kube.Update(context.Background(), current); err != nil {
 			t.Fatal(err)
 		}
-		session, err := SessionForAgent(context.Background(), reader, policy, agent)
+		session, err := SessionForAgent(context.Background(), reader, policy, agent, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestCredentialResolutionUsesOnlyApprovedLocalSecretAndReloadsRotation(t *te
 	if err := kube.Delete(context.Background(), local); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SessionForAgent(context.Background(), reader, policy, agent); !apierrors.IsNotFound(err) {
+	if _, err := SessionForAgent(context.Background(), reader, policy, agent, ""); !apierrors.IsNotFound(err) {
 		t.Fatalf("missing local key must not fall back: %v", err)
 	}
 	for _, key := range reader.keys {
@@ -98,16 +98,16 @@ func TestCredentialResolutionUsesOnlyApprovedLocalSecretAndReloadsRotation(t *te
 		}
 	}
 	before := len(reader.keys)
-	if _, err := SessionForAgent(context.Background(), reader, NamespacePolicy{}, agent); err == nil {
+	if _, err := SessionForAgent(context.Background(), reader, NamespacePolicy{}, agent, ""); err == nil {
 		t.Fatal("missing policy must deny credential resolution")
 	}
 	for _, name := range []string{"", "hga-system/api-key", "../api-key", " api-key"} {
 		agent.Spec.ApiKeySecretRef = name
-		if _, err := SessionForAgent(context.Background(), reader, policy, agent); err == nil {
+		if _, err := SessionForAgent(context.Background(), reader, policy, agent, ""); err == nil {
 			t.Fatal("invalid Secret reference was accepted")
 		}
 	}
-	if _, err := SessionForAgent(context.Background(), reader, policy, nil); err == nil {
+	if _, err := SessionForAgent(context.Background(), reader, policy, nil, ""); err == nil {
 		t.Fatal("nil Agent was accepted")
 	}
 	if len(reader.keys) != before {
@@ -122,7 +122,7 @@ func TestCredentialResolutionRejectsUnusableSecrets(t *testing.T) {
 	}
 	agent := &infrastructurev1.HarnessGitopsAgent{ObjectMeta: metav1.ObjectMeta{Namespace: "team-argo"},
 		Spec: infrastructurev1.HarnessGitopsAgentSpec{ApiKeySecretRef: "api-key"}}
-	if _, err := SessionForAgent(context.Background(), nil, policy, agent); err == nil {
+	if _, err := SessionForAgent(context.Background(), nil, policy, agent, ""); err == nil {
 		t.Fatal("nil reader must fail safely")
 	}
 	for _, data := range []map[string][]byte{nil, {APIKeySecretKey: {}}, {APIKeySecretKey: []byte(" \n\t")}, {"wrong_key": []byte("key")}} {
@@ -132,7 +132,7 @@ func TestCredentialResolutionRejectsUnusableSecrets(t *testing.T) {
 		}
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: agent.Namespace}, Data: data}
 		reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
-		if _, err := SessionForAgent(context.Background(), reader, policy, agent); !apierrors.IsBadRequest(err) {
+		if _, err := SessionForAgent(context.Background(), reader, policy, agent, ""); !apierrors.IsBadRequest(err) {
 			t.Fatalf("unusable credential was not rejected: %v", err)
 		}
 	}

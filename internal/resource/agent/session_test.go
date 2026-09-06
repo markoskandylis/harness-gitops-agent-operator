@@ -35,6 +35,7 @@ func TestHarnessClientCannotUseControllerNamespaceSecret(t *testing.T) {
 		reader,
 		policyForTest(t, apiKeyTestAgentNamespace),
 		newAPIKeyNamespaceTestAgent(),
+		"",
 	); !apierrors.IsNotFound(err) {
 		t.Fatalf("expected missing local Secret, never the controller Secret: %v", err)
 	}
@@ -54,6 +55,7 @@ func TestHarnessClientDefaultsAPIKeySecretToAgentNamespace(t *testing.T) {
 		reader,
 		policyForTest(t, apiKeyTestAgentNamespace),
 		newAPIKeyNamespaceTestAgent(),
+		"",
 	); err != nil {
 		t.Fatalf("get Harness client from agent Secret namespace: %v", err)
 	}
@@ -73,6 +75,7 @@ func TestUnapprovedNamespaceCannotUseItsOwnKey(t *testing.T) {
 		reader,
 		policyForTest(t, apiKeyTestControllerNamespace),
 		newAPIKeyNamespaceTestAgent(),
+		"",
 	)
 	if err == nil || apierrors.IsNotFound(err) {
 		t.Fatalf("expected namespace denial before credential lookup, got %v", err)

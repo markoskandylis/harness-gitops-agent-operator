@@ -34,6 +34,9 @@ manager:
   # Explicit instance namespaces only; empty denies all management requests.
   # API-key Secrets must exist beside their Agent CRs. No global fallback.
   managedNamespaces: []
+  # Harness API gateway the controller calls. Pinned here so the pod
+  # environment (HARNESS_ENDPOINT) can never redirect provisioning keys.
+  harnessEndpoint: https://app.harness.io/gateway
   appProjectPendingRetryInterval: 20s
   harnessMappingResyncInterval: 5m
   healthProbe:

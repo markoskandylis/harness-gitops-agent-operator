@@ -12,9 +12,13 @@ func TestProductionSessionConfigurationDoesNotInheritCredentialsOrDumpBodies(t *
 	t.Setenv("TF_LOG", "DEBUG")
 	t.Setenv("HARNESS_PLATFORM_API_KEY", "global-test-credential")
 	t.Setenv("HARNESS_ACCOUNT_ID", "global-test-account")
-	cfg := newSDKConfiguration()
+	t.Setenv("HARNESS_ENDPOINT", "https://ambient.example.invalid/gateway")
+	cfg := newSDKConfiguration(DefaultEndpoint)
 	if cfg.ApiKey != "" || cfg.AccountId != "" {
 		t.Fatal("production configuration inherited ambient credentials")
+	}
+	if cfg.BasePath != DefaultEndpoint {
+		t.Fatal("production configuration inherited an ambient endpoint")
 	}
 	if cfg.HTTPClient.Logger != nil || cfg.HTTPClient.HTTPClient.Transport != http.DefaultTransport {
 		t.Fatal("production transport can use SDK request/response logging")
@@ -22,7 +26,7 @@ func TestProductionSessionConfigurationDoesNotInheritCredentialsOrDumpBodies(t *
 	if cfg.HTTPClient.RetryMax != 0 || cfg.HTTPClient.HTTPClient.Timeout != DefaultHTTPTimeout {
 		t.Fatal("production transport lost controller-owned retry or timeout policy")
 	}
-	if next := newSDKConfiguration(); next.HTTPClient.HTTPClient.Transport != cfg.HTTPClient.HTTPClient.Transport {
+	if next := newSDKConfiguration(DefaultEndpoint); next.HTTPClient.HTTPClient.Transport != cfg.HTTPClient.HTTPClient.Transport {
 		t.Fatal("per-reconcile sessions must reuse the connection pool")
 	}
 	if _, err := NewSession(" "); err == nil {
