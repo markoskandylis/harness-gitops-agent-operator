@@ -38,7 +38,7 @@ var _ = Describe("Manager setup", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		err = controller.SetupWithManager(mgr, controller.Options{
-			APIKeySecretNamespace:          "controller-system",
+			ManagedNamespaces:              []string{"default"},
 			AppProjectPendingRetryInterval: controller.DefaultAppProjectPendingRetryInterval,
 			HarnessMappingResyncInterval:   controller.DefaultHarnessMappingResyncInterval,
 		})

@@ -230,12 +230,9 @@ func TestCredentialRecoveryRemainsEnabledForManagedAgent(t *testing.T) {
 		infrastructurev1.OwnershipManaged,
 	)
 
-	_, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
-	if err == nil {
-		t.Fatal("expected missing API key Secret to stop managed credential recovery")
-	}
-	if errors.Is(err, errHarnessAgentOwnershipUnknown) {
-		t.Fatalf("managed agent was incorrectly blocked by the ownership guard: %v", err)
+	result, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
+	if err != nil || result.RequeueAfter != agentHealthFastResync {
+		t.Fatalf("expected bounded credential retry, got %v, %v", result, err)
 	}
 }
 
@@ -274,9 +271,10 @@ func newAgentOwnershipTestReconciler(
 	}
 
 	return &Reconciler{
-		Client:    k8sClient,
-		APIReader: k8sClient,
-		Scheme:    scheme,
+		NamespacePolicy: policyForTest(t, agent.Namespace),
+		Client:          k8sClient,
+		APIReader:       k8sClient,
+		Scheme:          scheme,
 	}, fetched
 }
 

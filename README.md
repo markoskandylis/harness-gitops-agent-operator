@@ -16,6 +16,13 @@ its own readiness, remote identity, ownership, and cleanup lifecycle.
 The editable architecture diagram is in
 [docs/architecture.drawio](docs/architecture.drawio).
 
+The target architecture is one platform operator deploying and maintaining
+GitOps instances for administrators and tenants. Tenants consume Argo CD;
+organization-owned operators are a secondary exception. See
+[Operator-managed GitOps instances](docs/operator-tenancy-architecture.md)
+for the product boundaries and implementation stages. Runtime deployment by
+the operator is proposed functionality, not a feature of the current release.
+
 ## Architecture
 
 One controller-runtime manager runs two reconcilers:
@@ -26,8 +33,8 @@ One controller-runtime manager runs two reconcilers:
 | Project Mapping | Resolve the Agent and target scopes, wait for the AppProject and healthy Agent, then create, verify, adopt, observe, or delete one Harness mapping. |
 
 The root `internal/controller/setup.go` is a small registration façade. Agent
-logic lives in `internal/controller/agent/`; Mapping logic lives in
-`internal/controller/projectmapping/`. Harness SDK session construction,
+logic lives in `internal/resource/agent/`; Mapping logic lives in
+`internal/resource/projectmapping/`. Harness SDK session construction,
 Secret lookup, error handling, identifier candidates, Agent calls, Mapping
 calls, and readiness checks live behind the shared `internal/harness/`
 boundary.
@@ -140,7 +147,10 @@ More examples:
 - [PROJECT-scoped Agent](config/samples/infrastructure_v1_harnessgitopsagent.yaml)
 - [Mapping resource](config/samples/infrastructure_v1_harnessgitopsprojectmapping.yaml)
 - [Bootstrap values](charts/harness-gitops-agent-bootstrap/values-example.yaml)
+- [ORG scope serving several projects](charts/harness-gitops-agent-bootstrap/values-org-scope-example.yaml)
 - [ACCOUNT scope with many mappings](charts/harness-gitops-agent-bootstrap/values-account-scope-example.yaml)
+- [Controller values with managed namespaces](charts/harness-gitops-agent-controller/values-example.yaml)
+- [Developer RBAC that allows Mappings but not Agents](test/manifests/tenant-mapping-editor-rbac.yaml)
 
 ## Ownership and adoption
 
@@ -248,26 +258,30 @@ For a controller-created Agent, the controller writes the Secret named by
 GITOPS_AGENT_TOKEN
 ```
 
-For most installations, keep API credentials in the controller namespace:
+Every API key lives beside its Agent CR. The controller reads
+`spec.apiKeySecretRef` only from the Agent's own namespace, and only when that
+namespace is listed in `manager.managedNamespaces`. There is no central key
+namespace and no fallback. Give each instance namespace a key from a Harness
+service account scoped to what that namespace may manage:
 
 ```sh
-kubectl create namespace hga-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n hga-system create secret generic harness-api-key-secret \
+kubectl create namespace gitops-agent --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n gitops-agent create secret generic harness-api-key-secret \
   --from-literal=api_key="$HARNESS_API_KEY"
 ```
 
-When the controller Helm chart is installed in `hga-system`, leaving
-`manager.apiKeySecretNamespace` empty resolves it to `hga-system`. Every Agent
-still selects a Secret by name, but the controller reads that name from the
-controller release namespace. Set an explicit value only to use a different
-central namespace. Token Secrets remain beside their Agent runtimes.
-Centralizing the API key also keeps cleanup credentials available while a
-workload namespace is being removed.
+Token Secrets are written beside their Agent runtimes in the same namespace.
+Delete Agent and Mapping CRs before deleting a namespace, because the
+finalizers need the key to clean up in Harness. The Harness API gateway is
+pinned by `manager.harnessEndpoint`; the pod environment cannot change it.
+Never put API keys or generated Agent tokens in Helm values or committed
+manifests.
 
-When running the controller binary directly, omitting
-`--api-key-secret-namespace` retains the binary's namespaced behavior and reads
-each API key Secret from its Agent namespace. Never put API keys or generated
-Agent tokens in Helm values or committed manifests.
+Inside an approved namespace the controller acts with that namespace's key, not
+with the identity of whoever created the CR. Who may create Agents versus
+Mappings there is a Kubernetes RBAC decision; see
+[test/manifests/README.md](test/manifests/README.md) for the namespace model,
+the persona checks, and a developer Role that allows Mappings but not Agents.
 
 ## Installation
 
@@ -287,7 +301,7 @@ helm upgrade --install hga-controller \
   charts/harness-gitops-agent-controller \
   --namespace hga-system \
   --create-namespace \
-  --set manager.apiKeySecretNamespace=hga-system \
+  --set 'manager.managedNamespaces={gitops-agent}' \
   --wait
 ```
 

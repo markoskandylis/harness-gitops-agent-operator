@@ -1,0 +1,40 @@
+# Developer persona RBAC for one agent namespace.
+#
+# Grants a team the right to create HarnessGitopsProjectMapping resources beside
+# the platform-owned Agent, and to read the Agent, and nothing else:
+#   - no create/update/delete on HarnessGitopsAgent: a developer must not be able
+#     to spend this namespace's Harness key on a new agent registration
+#   - no status writes on either kind: status records remote ownership, which
+#     authorises deletion in Harness
+#   - no Secret access: the API key and the agent token stay with the platform
+#
+# Replace <AGENT_NAMESPACE> and <TEAM_GROUP>, then apply. Verify with:
+#   kubectl auth can-i create harnessgitopsagents -n <AGENT_NAMESPACE> --as-group=<TEAM_GROUP> --as=anyone   # no
+#   kubectl auth can-i create harnessgitopsprojectmappings -n <AGENT_NAMESPACE> --as-group=<TEAM_GROUP> --as=anyone   # yes
+#   kubectl auth can-i patch harnessgitopsprojectmappings --subresource=status -n <AGENT_NAMESPACE> --as-group=<TEAM_GROUP> --as=anyone   # no
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hga-mapping-editor
+  namespace: <AGENT_NAMESPACE>
+rules:
+  - apiGroups: ["infrastructure.kandylis.co.uk"]
+    resources: ["harnessgitopsprojectmappings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["infrastructure.kandylis.co.uk"]
+    resources: ["harnessgitopsagents"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-hga-mapping-editor
+  namespace: <AGENT_NAMESPACE>
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hga-mapping-editor
+subjects:
+  - kind: Group
+    name: <TEAM_GROUP>
+    apiGroup: rbac.authorization.k8s.io

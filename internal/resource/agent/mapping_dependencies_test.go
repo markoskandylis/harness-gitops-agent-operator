@@ -340,9 +340,10 @@ func newAgentDependencyFixture(
 
 	return &agentDependencyFixture{
 		reconciler: &Reconciler{
-			Client:    cachedClient,
-			Scheme:    scheme,
-			APIReader: readerClient,
+			NamespacePolicy: policyForTest(t, agent.Namespace),
+			Client:          cachedClient,
+			Scheme:          scheme,
+			APIReader:       readerClient,
 		},
 		key:           client.ObjectKeyFromObject(agent),
 		deleted:       &deleted,

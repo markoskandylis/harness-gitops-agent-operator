@@ -846,6 +846,7 @@ func newProjectMappingClaimReconciler(
 		WithObjects(objects...).
 		Build()
 	return &Reconciler{
+		NamespacePolicy:              mappingPolicyForObjects(t, objects...),
 		Client:                       k8sClient,
 		APIReader:                    k8sClient,
 		HarnessMappingResyncInterval: time.Second,

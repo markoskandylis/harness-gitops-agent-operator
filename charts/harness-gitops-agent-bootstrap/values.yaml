@@ -17,9 +17,10 @@ harnessAgent:
     scope: PROJECT
     type: MANAGED_ARGO_PROVIDER
     existingAgentIdentifier: ""
-    # The Harness API key Secret must already exist in the namespace configured
-    # on the controller. The controller Helm chart defaults that location to
-    # its own release namespace. Its key is "api_key"; never put the value here.
+    # The Harness API key Secret must already exist IN THIS RELEASE NAMESPACE,
+    # and this namespace must be listed in the controller's
+    # manager.managedNamespaces. The controller reads keys only beside the
+    # Agent CR. Its key is "api_key"; never put the value here.
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: ""
 

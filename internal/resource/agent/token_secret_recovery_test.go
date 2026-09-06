@@ -27,6 +27,7 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "project-agent-no-mapping",
 			Namespace:  "default",
+			UID:        types.UID("project-agent-uid"),
 			Finalizers: []string{harnessAgentFinalizer},
 		},
 		Spec: infrastructurev1.HarnessGitopsAgentSpec{
@@ -52,8 +53,12 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 		},
 		Data: map[string][]byte{gitopsAgentTokenSecretKey: []byte("token")},
 	}
+	if err := ctrl.SetControllerReference(agent, tokenSecret, scheme); err != nil {
+		t.Fatal(err)
+	}
 
 	reconciler := &Reconciler{
+		NamespacePolicy: policyForTest(t, agent.Namespace),
 		Client: fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).

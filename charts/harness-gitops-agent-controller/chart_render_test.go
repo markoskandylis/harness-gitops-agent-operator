@@ -111,20 +111,20 @@ func TestCRDLifecycleFlagsApplyToBothCRDs(t *testing.T) {
 	}
 }
 
-func TestAPIKeySecretNamespaceArgument(t *testing.T) {
+func TestManagedNamespacesArgument(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		extraArgs []string
 		want      string
 	}{
 		{
-			name: "defaults to release namespace",
-			want: "--api-key-secret-namespace=hga-system",
+			name: "defaults to no approved namespaces",
+			want: "--managed-namespaces=",
 		},
 		{
-			name:      "preserves explicit override",
-			extraArgs: []string{"--set", "manager.apiKeySecretNamespace=credential-system"},
-			want:      "--api-key-secret-namespace=credential-system",
+			name:      "passes explicit approval list",
+			extraArgs: []string{"--set-json", `manager.managedNamespaces=["team-a-argo","platform-argo"]`},
+			want:      "--managed-namespaces=team-a-argo,platform-argo",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -154,12 +154,90 @@ func TestAPIKeySecretNamespaceArgument(t *testing.T) {
 
 			var namespaceArgs []string
 			for _, arg := range args {
-				if strings.HasPrefix(arg, "--api-key-secret-namespace=") {
+				if strings.HasPrefix(arg, "--api-key-secret-namespace") {
+					t.Fatal("global credential override must never be rendered")
+				}
+				if strings.HasPrefix(arg, "--managed-namespaces=") {
 					namespaceArgs = append(namespaceArgs, arg)
 				}
 			}
 			if !reflect.DeepEqual(namespaceArgs, []string{test.want}) {
-				t.Fatalf("API key namespace args = %v, want [%s]", namespaceArgs, test.want)
+				t.Fatalf("managed namespace args = %v, want [%s]", namespaceArgs, test.want)
+			}
+		})
+	}
+}
+
+func controllerArgs(t *testing.T, extraArgs ...string) []string {
+	t.Helper()
+	rendered := decodeYAMLDocuments(t, helmTemplate(t, extraArgs...))
+	deployment := findObjectByKindSuffix(t, rendered, "Deployment", "-harness-gitops-agent-controller")
+	containers, found, err := unstructured.NestedSlice(deployment, "spec", "template", "spec", "containers")
+	if err != nil || !found || len(containers) != 1 {
+		t.Fatalf("controller containers = %v (found=%v): %v", containers, found, err)
+	}
+	container, ok := containers[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("controller container has type %T, want map", containers[0])
+	}
+	args, found, err := unstructured.NestedStringSlice(container, "args")
+	if err != nil || !found {
+		t.Fatalf("read controller args (found=%v): %v", found, err)
+	}
+	return args
+}
+
+func TestHarnessEndpointArgument(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		extraArgs []string
+		want      string
+	}{
+		{
+			name: "defaults to the Harness gateway",
+			want: "--harness-api-endpoint=https://app.harness.io/gateway",
+		},
+		{
+			name:      "passes an explicit endpoint",
+			extraArgs: []string{"--set", "manager.harnessEndpoint=https://app3.harness.io/gateway"},
+			want:      "--harness-api-endpoint=https://app3.harness.io/gateway",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var endpointArgs []string
+			for _, arg := range controllerArgs(t, test.extraArgs...) {
+				if strings.HasPrefix(arg, "--harness-api-endpoint=") {
+					endpointArgs = append(endpointArgs, arg)
+				}
+			}
+			if !reflect.DeepEqual(endpointArgs, []string{test.want}) {
+				t.Fatalf("endpoint args = %v, want [%s]", endpointArgs, test.want)
+			}
+		})
+	}
+}
+
+func TestChartRejectsInvalidPolicyAndRemovedGlobalCredentialSetting(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is required for chart render tests")
+	}
+	for _, values := range []string{
+		`manager.managedNamespaces=["*"]`,
+		`manager.managedNamespaces=[""]`,
+		`manager.managedNamespaces=["valid","valid"]`,
+		`manager.managedNamespaces=["hga-system/other"]`,
+		`manager.apiKeySecretNamespace="hga-system"`,
+		`manager.apiKeySecretNamespace=""`,
+		`manager.harnessEndpoint="app.harness.io/gateway"`,
+		`manager.harnessEndpoint="https://user:secret@app.harness.io/gateway"`,
+	} {
+		t.Run(values, func(t *testing.T) {
+			output, err := exec.Command("helm", "template", "chart-test", ".", "--set-json", values).CombinedOutput()
+			if err == nil {
+				t.Fatalf("invalid policy rendered successfully: %s", output)
+			}
+			if !strings.Contains(string(output), "schema") {
+				t.Fatalf("expected schema validation failure, got: %s", output)
 			}
 		})
 	}

@@ -23,11 +23,10 @@ Only the controller and the target Secret handle it.
 
 - The controller from `charts/harness-gitops-agent-controller` is running. Its
   chart installs both required CRDs.
-- A Secret containing the Harness API key exists in the controller's configured
-  API-key namespace. The controller Helm chart defaults this to its own release
-  namespace; a directly run controller without
-  `--api-key-secret-namespace` instead reads from each Agent namespace. Its name
-  is `harnessAgent.spec.apiKeySecretRef` and its data key is `api_key`.
+- A Secret containing the Harness API key exists in this release namespace, and
+  this namespace is listed in the controller's `manager.managedNamespaces`. The
+  controller reads keys only beside the Agent CR. The Secret name is
+  `harnessAgent.spec.apiKeySecretRef` and its data key is `api_key`.
 - Use a least-privilege Harness service-account key. Never place the key in
   chart values.
 - Run one Agent runtime per namespace because the upstream runtime uses fixed

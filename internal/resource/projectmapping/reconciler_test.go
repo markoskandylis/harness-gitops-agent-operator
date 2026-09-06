@@ -1092,6 +1092,7 @@ func newMappingReconcilerFixture(
 
 	mappingAPI := &fakeProjectMappingReconcileAPI{}
 	reconciler := &Reconciler{
+		NamespacePolicy:                mappingPolicyForObjects(t, objects...),
 		Client:                         k8sClient,
 		APIReader:                      k8sClient,
 		AppProjectPendingRetryInterval: time.Second,

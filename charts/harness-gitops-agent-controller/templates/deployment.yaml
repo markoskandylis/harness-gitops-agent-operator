@@ -52,7 +52,8 @@ spec:
             - --metrics-secure={{ .Values.manager.metrics.secure }}
             - --enable-http2={{ .Values.manager.enableHTTP2 }}
             - --zap-devel={{ .Values.manager.zapDevelopment }}
-            - --api-key-secret-namespace={{ default .Release.Namespace .Values.manager.apiKeySecretNamespace }}
+            - --managed-namespaces={{ join "," .Values.manager.managedNamespaces }}
+            - --harness-api-endpoint={{ .Values.manager.harnessEndpoint }}
             - --app-project-pending-retry-interval={{ .Values.manager.appProjectPendingRetryInterval }}
             - --harness-mapping-resync-interval={{ .Values.manager.harnessMappingResyncInterval }}
             {{- if .Values.leaderElection.enabled }}

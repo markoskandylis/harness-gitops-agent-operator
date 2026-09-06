@@ -8,12 +8,37 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
 	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
 )
+
+func TestSDKMappingCreateSanitizesDeniedAndUncertainErrors(t *testing.T) {
+	for _, code := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			session := newSDKMappingTestSession(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, `{"message":"already exists","privateKey":"sensitive-test-token"}`, code)
+			}))
+			_, err := (SDKProjectMappingAPI{}).Create(context.Background(), session, sdkMappingTestRequest())
+			if err == nil || strings.Contains(err.Error(), "sensitive-test-token") || errors.Is(err, ErrProjectMappingAlreadyExists) {
+				t.Fatalf("unsafe or misclassified Mapping create error: %v", err)
+			}
+			want := harnessapi.VerdictDenied
+			if code == http.StatusServiceUnavailable {
+				want = harnessapi.VerdictTransient
+				if !errors.Is(err, ErrProjectMappingCreateOutcomeUnknown) {
+					t.Fatal("transient create lost uncertain-outcome handling")
+				}
+			}
+			if harnessapi.VerdictOf(err) != want {
+				t.Fatal("Mapping create lost its authoritative API verdict")
+			}
+		})
+	}
+}
 
 func TestSDKMappingListStopsAfterSuccessfulEmptyCanonicalResponse(t *testing.T) {
 	var paths []string
@@ -140,7 +165,7 @@ func sdkAccountScopeRequest() ProjectMappingRequest {
 		// ACCOUNT-scoped agents live at account level: no org, no project.
 		Agent: Scope{},
 		// The mapped project always has both.
-		Mapping:         Scope{OrgIdentifier: "harness_controllers", ProjectIdentifier: "hub_orchistrator"},
+		Mapping:         Scope{OrgIdentifier: "example_org", ProjectIdentifier: "example_project"},
 		ArgoProjectName: "default",
 	}
 }
@@ -163,10 +188,10 @@ func TestSDKMappingCreateSendsMappingScope(t *testing.T) {
 	if _, err := (SDKProjectMappingAPI{}).Create(context.Background(), session, request); err != nil {
 		t.Fatalf("create mapping: %v", err)
 	}
-	if body.OrgIdentifier != "harness_controllers" {
+	if body.OrgIdentifier != "example_org" {
 		t.Fatalf("create body orgIdentifier = %q, want the MAPPED project's org", body.OrgIdentifier)
 	}
-	if body.ProjectIdentifier != "hub_orchistrator" {
+	if body.ProjectIdentifier != "example_project" {
 		t.Fatalf("create body projectIdentifier = %q, want the MAPPED project", body.ProjectIdentifier)
 	}
 	if !body.AutoCreateServiceEnv {
@@ -240,10 +265,10 @@ func TestSDKMappingDeleteSendsMappingScope(t *testing.T) {
 	if want := "/gitops/api/v2/agents/account.mapping-agent/appprojectsmapping/mapping-1"; path != want {
 		t.Fatalf("delete path = %q, want %q", path, want)
 	}
-	if got := query.Get("orgIdentifier"); got != "harness_controllers" {
+	if got := query.Get("orgIdentifier"); got != "example_org" {
 		t.Fatalf("delete query orgIdentifier = %q, want the MAPPED project's org", got)
 	}
-	if got := query.Get("projectIdentifier"); got != "hub_orchistrator" {
+	if got := query.Get("projectIdentifier"); got != "example_project" {
 		t.Fatalf("delete query projectIdentifier = %q, want the MAPPED project", got)
 	}
 }

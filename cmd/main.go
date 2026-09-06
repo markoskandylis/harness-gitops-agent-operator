@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -42,6 +43,8 @@ import (
 
 	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
 	"github.com/markoskandylis/harness-gitops-agent-operator/internal/controller"
+	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -66,7 +69,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var apiKeySecretNamespace string
+	var managedNamespaces string
+	var harnessEndpoint string
 	var appProjectPendingRetryInterval time.Duration
 	var harnessMappingResyncInterval time.Duration
 	var tlsOpts []func(*tls.Config)
@@ -88,10 +92,17 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(
-		&apiKeySecretNamespace,
-		"api-key-secret-namespace",
+		&managedNamespaces,
+		"managed-namespaces",
 		"",
-		"Namespace containing each HarnessGitopsAgent API key Secret. Empty uses the agent CR namespace.",
+		"Comma-separated approved agent/mapping namespaces. Empty denies all; wildcards are not supported. "+
+			"Credentials are always namespace-local.",
+	)
+	flag.StringVar(
+		&harnessEndpoint,
+		"harness-api-endpoint",
+		harnessapi.DefaultEndpoint,
+		"Harness API gateway base URL. Pinned by configuration so the pod environment cannot redirect requests.",
 	)
 	flag.DurationVar(
 		&appProjectPendingRetryInterval,
@@ -112,6 +123,23 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	var namespaces []string
+	if strings.TrimSpace(managedNamespaces) != "" {
+		namespaces = strings.Split(managedNamespaces, ",")
+	}
+	if _, err := resourceutil.NewNamespacePolicy(namespaces); err != nil {
+		setupLog.Error(err, "invalid managed namespaces")
+		os.Exit(1)
+	}
+	setupLog.Info("configured namespace-local credential policy", "managedNamespaces", namespaces)
+	if len(namespaces) == 0 {
+		setupLog.Info("No namespaces approved; all agent and mapping requests will be refused")
+	}
+	if err := harnessapi.ValidateEndpoint(harnessEndpoint); err != nil {
+		setupLog.Error(err, "invalid Harness API endpoint")
+		os.Exit(1)
+	}
+	setupLog.Info("configured Harness API endpoint", "endpoint", harnessEndpoint)
 	if err := controller.ValidateMappingIntervals(
 		appProjectPendingRetryInterval,
 		harnessMappingResyncInterval,
@@ -190,9 +218,9 @@ func main() {
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:  scheme,
 		Metrics: metricsServerOptions,
-		// Restrict the Secret informer to Secrets this controller owns so the
-		// manager does not cache (or need list/watch on) every Secret in the
-		// cluster. The unlabeled API key Secret is read via the API reader.
+		// Limit cached Secret data to labeled token Secrets. This selector is
+		// not an authorization boundary: Kubernetes RBAC must still constrain
+		// list/watch access. API-key Secrets are read via the API reader.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Secret{}: {
@@ -224,7 +252,8 @@ func main() {
 	}
 
 	if err := controller.SetupWithManager(mgr, controller.Options{
-		APIKeySecretNamespace:          apiKeySecretNamespace,
+		ManagedNamespaces:              namespaces,
+		HarnessEndpoint:                harnessEndpoint,
 		AppProjectPendingRetryInterval: appProjectPendingRetryInterval,
 		HarnessMappingResyncInterval:   harnessMappingResyncInterval,
 	}); err != nil {

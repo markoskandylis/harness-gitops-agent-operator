@@ -11,6 +11,7 @@ Verify the controller:
    kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "harness-gitops-agent-controller.fullname" . }} -f
 
 Next: create a HarnessGitopsAgent and zero or more HarnessGitopsProjectMapping
-resources (see the harness-gitops-agent-bootstrap chart). The API key Secret
-referenced by the Agent's spec.apiKeySecretRef must exist in namespace
-"{{ default .Release.Namespace .Values.manager.apiKeySecretNamespace }}".
+resources in manager.managedNamespaces (see the harness-gitops-agent-bootstrap chart).
+The Secret referenced by spec.apiKeySecretRef must exist in the SAME namespace
+as the Agent CR. Cross-namespace credential references and fallbacks are not supported.
+Approved namespaces: {{ join ", " .Values.manager.managedNamespaces | default "NONE — all requests will be refused" }}.

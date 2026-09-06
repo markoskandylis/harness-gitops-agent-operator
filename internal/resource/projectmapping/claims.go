@@ -169,6 +169,9 @@ func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 	mappingID string,
 	provisionalPriority *projectMappingClaimPriority,
 ) (projectMappingClaimDecision, error) {
+	if !r.NamespacePolicy.Allows(current.Namespace) {
+		return projectMappingClaimDecision{}, fmt.Errorf("mapping claim namespace is not approved")
+	}
 	mappingID = strings.TrimSpace(mappingID)
 	if mappingID == "" {
 		return projectMappingClaimDecision{}, fmt.Errorf(
@@ -193,6 +196,22 @@ func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 	currentSeen := false
 	for index := range resources.Items {
 		candidate := &resources.Items[index]
+		if !r.NamespacePolicy.Allows(candidate.Namespace) {
+			// An unapproved request cannot compete for a new claim. However,
+			// never forget a recorded binding merely because approval was
+			// revoked: require an administrator to resolve it before takeover
+			// or deletion. No Agent/Secret lookup is made for that namespace.
+			if candidate.Status.Remote != nil &&
+				strings.TrimSpace(candidate.Status.Remote.MappingID) == mappingID &&
+				(isDeletionOwnership(candidate.Status.Remote.Ownership) ||
+					isUncertainCreationState(candidate.Status.CreationState) ||
+					candidate.Status.Remote.Ownership == infrastructurev1.OwnershipExternal) {
+				return projectMappingClaimDecision{}, fmt.Errorf(
+					"mapping %q has a recorded binding in unapproved namespace %q; restore approval and resolve that binding first",
+					mappingID, candidate.Namespace)
+			}
+			continue
+		}
 		isCurrent := sameProjectMappingResource(candidate, current)
 		currentSeen = currentSeen || isCurrent
 		priority, eligible, err := r.projectMappingClaimPriority(

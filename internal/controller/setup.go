@@ -6,6 +6,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
 	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
 	mappingcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/projectmapping"
 )
@@ -20,7 +21,9 @@ const (
 
 // Options contains shared configuration for both resource controllers.
 type Options struct {
-	APIKeySecretNamespace          string
+	ManagedNamespaces []string
+	// HarnessEndpoint is the Harness API gateway; empty selects the default.
+	HarnessEndpoint                string
 	AppProjectPendingRetryInterval time.Duration
 	HarnessMappingResyncInterval   time.Duration
 }
@@ -32,10 +35,15 @@ func ValidateMappingIntervals(pendingRetry, harnessResync time.Duration) error {
 
 // SetupWithManager registers both controllers with one manager.
 func SetupWithManager(mgr ctrl.Manager, options Options) error {
+	policy, err := resourceutil.NewNamespacePolicy(options.ManagedNamespaces)
+	if err != nil {
+		return fmt.Errorf("configure managed namespaces: %w", err)
+	}
 	if err := (&mappingcontroller.Reconciler{
 		Client:                         mgr.GetClient(),
 		APIReader:                      mgr.GetAPIReader(),
-		APIKeySecretNamespace:          options.APIKeySecretNamespace,
+		NamespacePolicy:                policy,
+		HarnessEndpoint:                options.HarnessEndpoint,
 		AppProjectPendingRetryInterval: options.AppProjectPendingRetryInterval,
 		HarnessMappingResyncInterval:   options.HarnessMappingResyncInterval,
 	}).SetupWithManager(mgr); err != nil {
@@ -43,10 +51,11 @@ func SetupWithManager(mgr ctrl.Manager, options Options) error {
 	}
 
 	if err := (&agentcontroller.Reconciler{
-		Client:                mgr.GetClient(),
-		APIReader:             mgr.GetAPIReader(),
-		Scheme:                mgr.GetScheme(),
-		APIKeySecretNamespace: options.APIKeySecretNamespace,
+		Client:          mgr.GetClient(),
+		APIReader:       mgr.GetAPIReader(),
+		Scheme:          mgr.GetScheme(),
+		NamespacePolicy: policy,
+		HarnessEndpoint: options.HarnessEndpoint,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up HarnessGitopsAgent controller: %w", err)
 	}

@@ -1,0 +1,62 @@
+# ORG-scope Agent serving several Harness projects of ONE organization.
+#
+# The agent is registered at org level, so gitopsAgent.harness.identity has an
+# orgIdentifier and no projectIdentifier. Every Mapping must name the target
+# projectId inside that org; a Mapping into another org is refused before any
+# Harness call (ResolutionInvalid).
+#
+# Prerequisites:
+#   - the controller lists THIS release namespace in manager.managedNamespaces
+#   - Secret harness-api-key-secret (key: api_key) exists in THIS namespace and
+#     holds a key from a Harness service account scoped to the org
+#
+#   helm dependency build .
+#   helm upgrade --install org-agent . \
+#     --namespace org-agent --create-namespace \
+#     --values values-org-scope-example.yaml --wait --timeout 10m
+
+harnessAgent:
+  metadata:
+    name: org-agent
+  spec:
+    name: org-agent
+    scope: ORG
+    apiKeySecretRef: harness-api-key-secret
+    tokenSecretRef: org-agent-token
+
+# One entry per Argo AppProject. Developers may add entries here (or apply
+# HarnessGitopsProjectMapping resources directly) when their RBAC allows it;
+# see test/manifests/tenant-mapping-editor-rbac.yaml.
+projectMappings:
+  - name: payments
+    appProject: payments
+    projectId: payments
+    autoCreateServiceEnv: false
+  - name: orders
+    appProject: orders
+    projectId: orders
+    autoCreateServiceEnv: false
+
+gitopsAgent:
+  enabled: true
+  argo-cd:
+    # Set false when the cluster already has the Argo CRDs.
+    crds:
+      install: true
+  harness:
+    identity:
+      accountIdentifier: your-account-id
+      orgIdentifier: your-org-id
+      # Must stay empty at ORG scope.
+      projectIdentifier: ""
+      agentIdentifier: org_agent
+  agent:
+    harnessName: org-agent
+    existingSecrets:
+      # Must equal harnessAgent.spec.tokenSecretRef.
+      agentToken: org-agent-token
+
+appProject:
+  # The named AppProjects (payments, orders) must exist in this namespace. This
+  # convenience creates only one; keep false on a clean cluster.
+  enabled: false

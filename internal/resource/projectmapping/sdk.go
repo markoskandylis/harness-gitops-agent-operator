@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/antihax/optional"
 	"github.com/harness/harness-go-sdk/harness/nextgen"
@@ -130,7 +129,8 @@ func (SDKProjectMappingAPI) Create(
 			return ProjectMapping{}, ErrProjectMappingAlreadyExists
 		}
 		if harnessapi.ClassifyResponse(httpResponse, err) == harnessapi.VerdictTransient {
-			return ProjectMapping{}, fmt.Errorf("%w: %w", ErrProjectMappingCreateOutcomeUnknown, err)
+			return ProjectMapping{}, fmt.Errorf("%w: %w", ErrProjectMappingCreateOutcomeUnknown,
+				mappingAPIError("create AppProject mapping", candidate, httpResponse, err))
 		}
 		lastErr = mappingAPIError("create AppProject mapping", candidate, httpResponse, err)
 		if harnessapi.ClassifyResponse(httpResponse, err) != harnessapi.VerdictAbsent {
@@ -174,8 +174,7 @@ func (SDKProjectMappingAPI) Delete(
 }
 
 func isProjectMappingConflict(response *http.Response, err error) bool {
-	return harnessapi.ClassifyResponse(response, err) == harnessapi.VerdictConflict ||
-		strings.Contains(strings.ToLower(harnessapi.ErrorBody(err)), "already exists")
+	return harnessapi.IsAlreadyExists(response, err, "already exists")
 }
 
 func mappingAPIError(
