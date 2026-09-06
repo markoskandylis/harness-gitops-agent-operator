@@ -123,8 +123,8 @@ func TestManagedNamespacesArgument(t *testing.T) {
 		},
 		{
 			name:      "passes explicit approval list",
-			extraArgs: []string{"--set-json", `manager.managedNamespaces=["team1-argo","platform-argo"]`},
-			want:      "--managed-namespaces=team1-argo,platform-argo",
+			extraArgs: []string{"--set-json", `manager.managedNamespaces=["team-a-argo","platform-argo"]`},
+			want:      "--managed-namespaces=team-a-argo,platform-argo",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -33,8 +33,8 @@ One controller-runtime manager runs two reconcilers:
 | Project Mapping | Resolve the Agent and target scopes, wait for the AppProject and healthy Agent, then create, verify, adopt, observe, or delete one Harness mapping. |
 
 The root `internal/controller/setup.go` is a small registration façade. Agent
-logic lives in `internal/controller/agent/`; Mapping logic lives in
-`internal/controller/projectmapping/`. Harness SDK session construction,
+logic lives in `internal/resource/agent/`; Mapping logic lives in
+`internal/resource/projectmapping/`. Harness SDK session construction,
 Secret lookup, error handling, identifier candidates, Agent calls, Mapping
 calls, and readiness checks live behind the shared `internal/harness/`
 boundary.
@@ -147,7 +147,10 @@ More examples:
 - [PROJECT-scoped Agent](config/samples/infrastructure_v1_harnessgitopsagent.yaml)
 - [Mapping resource](config/samples/infrastructure_v1_harnessgitopsprojectmapping.yaml)
 - [Bootstrap values](charts/harness-gitops-agent-bootstrap/values-example.yaml)
+- [ORG scope serving several projects](charts/harness-gitops-agent-bootstrap/values-org-scope-example.yaml)
 - [ACCOUNT scope with many mappings](charts/harness-gitops-agent-bootstrap/values-account-scope-example.yaml)
+- [Controller values with managed namespaces](charts/harness-gitops-agent-controller/values-example.yaml)
+- [Developer RBAC that allows Mappings but not Agents](test/manifests/tenant-mapping-editor-rbac.yaml)
 
 ## Ownership and adoption
 
