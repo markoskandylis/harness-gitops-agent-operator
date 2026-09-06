@@ -27,6 +27,20 @@ helm upgrade --install hgac charts/harness-gitops-agent-controller \
 Installs both CRDs and the controller together; a later `helm upgrade` updates
 all three resources.
 
+The one value you must set is `manager.managedNamespaces`: the namespaces whose
+Agent and Mapping CRs this controller manages. Each of them holds its own
+Harness API key beside the Agent CR; the controller namespace holds no key, and
+an empty list refuses every CR. See [`values-example.yaml`](./values-example.yaml)
+for a platform namespace plus two tenant namespaces, or pass the list inline:
+
+```bash
+helm upgrade --install hgac charts/harness-gitops-agent-controller \
+  --namespace hga-system --create-namespace \
+  --set 'manager.managedNamespaces={platform-agent,team-a-argo}'
+```
+
+Onboarding a namespace later is the same command with the new entry added.
+
 ## Uninstalling the chart
 
 ```bash

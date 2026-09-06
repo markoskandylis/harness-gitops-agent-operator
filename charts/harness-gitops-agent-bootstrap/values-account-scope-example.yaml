@@ -20,8 +20,9 @@ harnessAgent:
   spec:
     name: account-agent
     scope: ACCOUNT
-    # This Secret lives in the namespace configured on the controller, not
-    # necessarily in this bootstrap release namespace.
+    # This Secret lives IN THIS RELEASE NAMESPACE, which must be listed in the
+    # controller's manager.managedNamespaces. An ACCOUNT-scoped agent needs an
+    # account-level key, so keep this namespace platform-owned.
     apiKeySecretRef: harness-api-key-secret
     tokenSecretRef: account-agent-token
 

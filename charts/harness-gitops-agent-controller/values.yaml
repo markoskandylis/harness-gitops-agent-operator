@@ -33,6 +33,12 @@ leaderElection:
 manager:
   # Explicit instance namespaces only; empty denies all management requests.
   # API-key Secrets must exist beside their Agent CRs. No global fallback.
+  # One entry per namespace that holds an Agent CR and its key. Onboarding a
+  # namespace means adding it here and upgrading the release. Example:
+  #   managedNamespaces:
+  #     - platform-agent   # ACCOUNT or ORG agent, account/org-level key
+  #     - team-a-argo      # tenant instance, project-scoped key
+  #     - team-b-argo
   managedNamespaces: []
   # Harness API gateway the controller calls. Pinned here so the pod
   # environment (HARNESS_ENDPOINT) can never redirect provisioning keys.

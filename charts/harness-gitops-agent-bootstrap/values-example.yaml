@@ -7,11 +7,12 @@
 #     --namespace my-agent-ns --create-namespace \
 #     --values my-values.yaml --wait --timeout 10m
 #
-# Prerequisites: the harness-gitops-agent-operator controller is running, and
-# Secret harness-api-key-secret (key: api_key) exists in the API-key namespace
-# configured on that controller (its Helm release namespace by default). The
-# runtime pods may briefly wait for the token Secret while the controller
-# registers the Agent. Run one Agent per namespace.
+# Prerequisites: the harness-gitops-agent-operator controller is running with
+# this release namespace in manager.managedNamespaces, and Secret
+# harness-api-key-secret (key: api_key) exists IN THIS NAMESPACE with a key
+# scoped to the target project. The runtime pods may briefly wait for the
+# token Secret while the controller registers the Agent. Run one Agent per
+# namespace.
 
 harnessAgent:
   metadata:

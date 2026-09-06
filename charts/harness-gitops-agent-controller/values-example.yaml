@@ -1,0 +1,35 @@
+# Example values for the controller chart.
+#
+# Copy this file, edit the namespace list, then:
+#
+#   helm upgrade --install hga-controller charts/harness-gitops-agent-controller \
+#     --namespace hga-system --create-namespace \
+#     --values my-controller-values.yaml --wait
+#
+# The controller manages Agent and Mapping CRs ONLY in manager.managedNamespaces
+# and reads each API key from the Agent CR's own namespace. Its own namespace
+# (hga-system here) holds no Harness key. A CR in any other namespace reports
+# NamespaceNotAllowed and never reaches Harness. Onboarding a namespace is a
+# `helm upgrade` with the new entry.
+
+image:
+  repository: mkandylis/harness-gitops-agent-operator
+  # Pin an immutable tag in production.
+  tag: v0.6.0
+
+manager:
+  managedNamespaces:
+    # Platform-owned instance: ACCOUNT or ORG scoped agent, account/org key.
+    - platform-agent
+    # Tenant instances: PROJECT scoped agents, each with a project-scoped key
+    # created by the onboarding step. Developers get a Role that allows
+    # Mappings but not Agents (test/manifests/tenant-mapping-editor-rbac.yaml).
+    - team-a-argo
+    - team-b-argo
+  # Harness API gateway. Pinned so the pod environment cannot redirect it.
+  harnessEndpoint: https://app.harness.io/gateway
+  # JSON logs for production.
+  zapDevelopment: false
+
+leaderElection:
+  enabled: true

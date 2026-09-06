@@ -274,6 +274,12 @@ pinned by `manager.harnessEndpoint`; the pod environment cannot change it.
 Never put API keys or generated Agent tokens in Helm values or committed
 manifests.
 
+Inside an approved namespace the controller acts with that namespace's key, not
+with the identity of whoever created the CR. Who may create Agents versus
+Mappings there is a Kubernetes RBAC decision; see
+[test/manifests/README.md](test/manifests/README.md) for the namespace model,
+the persona checks, and a developer Role that allows Mappings but not Agents.
+
 ## Installation
 
 Prerequisites:
