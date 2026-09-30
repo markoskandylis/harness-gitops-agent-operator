@@ -9,7 +9,7 @@
 # populates .status.agentIdentifier and writes GITOPS_AGENT_TOKEN into the
 # Secret named by tokenSecretRef. Deleting the CR deregisters the agent from
 # Harness via the finalizer.
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsAgent
 metadata:
   name: project-agent

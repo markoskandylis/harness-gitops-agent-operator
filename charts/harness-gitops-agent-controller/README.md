@@ -27,6 +27,10 @@ helm upgrade --install hgac charts/harness-gitops-agent-controller \
 Installs both CRDs and the controller together; a later `helm upgrade` updates
 all three resources.
 
+This chart serves `infrastructure.harness.io/v1alpha1` and requires a controller
+image built for that API. Resources from the previous `v1` API group
+need a separate migration; see the [API migration note](../../README.md#resource-model).
+
 ## Uninstalling the chart
 
 ```bash
@@ -46,8 +50,8 @@ after deleting its CRs and confirming their finalizers completed:
 
 ```bash
 kubectl delete crd \
-  harnessgitopsprojectmappings.infrastructure.kandylis.co.uk \
-  harnessgitopsagents.infrastructure.kandylis.co.uk
+  harnessgitopsprojectmappings.infrastructure.harness.io \
+  harnessgitopsagents.infrastructure.harness.io
 ```
 
 ## Values
@@ -58,7 +62,7 @@ kubectl delete crd \
 | `crds.keep` | bool | `true` | Annotate both CRDs with `helm.sh/resource-policy: keep` so `helm uninstall` never deletes them. |
 | `replicaCount` | int | `1` | Controller replicas. Use `>= 2` with a PDB for HA. |
 | `image.repository` | string | `mkandylis/harness-gitops-agent-operator` | Controller image repository. |
-| `image.tag` | string | `v0.5.0` | Image tag. Pin to an immutable tag in production. |
+| `image.tag` | string | `v0.6.0-alpha.1` | Image tag. Build and publish this image before installing from a registry. |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
 | `rbac.create` | bool | `true` | Create the controller ClusterRole and binding. |
 | `serviceAccount.create` | bool | `true` | Create the controller ServiceAccount. |

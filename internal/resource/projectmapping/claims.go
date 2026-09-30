@@ -28,8 +28,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 const projectMappingReasonOwnershipConflict = "OwnershipConflict"
@@ -44,7 +44,7 @@ const (
 )
 
 type projectMappingClaim struct {
-	resource *infrastructurev1.HarnessGitopsProjectMapping
+	resource *infrastructurev1alpha1.HarnessGitopsProjectMapping
 	priority projectMappingClaimPriority
 }
 
@@ -58,7 +58,7 @@ type projectMappingClaimDecision struct {
 // cluster-wide view; deterministic ordering also closes concurrent races.
 func (r *Reconciler) requireProjectMappingClaim(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
@@ -74,7 +74,7 @@ func (r *Reconciler) requireProjectMappingClaim(
 
 func (r *Reconciler) requireNewExternalProjectMappingClaim(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
@@ -85,10 +85,10 @@ func (r *Reconciler) requireNewExternalProjectMappingClaim(
 		request,
 		mappingID,
 		&priority,
-		func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+		func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 			if status.Remote != nil &&
 				strings.TrimSpace(status.Remote.MappingID) == strings.TrimSpace(mappingID) &&
-				status.Remote.Ownership == infrastructurev1.OwnershipExternal {
+				status.Remote.Ownership == infrastructurev1alpha1.OwnershipExternal {
 				status.Remote = status.Remote.DeepCopy()
 				status.Remote.Ownership = ""
 			}
@@ -98,11 +98,11 @@ func (r *Reconciler) requireNewExternalProjectMappingClaim(
 
 func (r *Reconciler) requireProjectMappingClaimWithProvisional(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 	provisionalPriority *projectMappingClaimPriority,
-	onConflict func(*infrastructurev1.HarnessGitopsProjectMappingStatus),
+	onConflict func(*infrastructurev1alpha1.HarnessGitopsProjectMappingStatus),
 ) (bool, ctrl.Result, error) {
 	decision, err := r.resolveProjectMappingClaimWithProvisional(
 		ctx,
@@ -149,7 +149,7 @@ func (r *Reconciler) requireProjectMappingClaimWithProvisional(
 
 func (r *Reconciler) resolveProjectMappingClaim(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 ) (projectMappingClaimDecision, error) {
@@ -164,7 +164,7 @@ func (r *Reconciler) resolveProjectMappingClaim(
 
 func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 	provisionalPriority *projectMappingClaimPriority,
@@ -181,7 +181,7 @@ func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 		)
 	}
 
-	resources := &infrastructurev1.HarnessGitopsProjectMappingList{}
+	resources := &infrastructurev1alpha1.HarnessGitopsProjectMappingList{}
 	if err := r.APIReader.List(ctx, resources); err != nil {
 		return projectMappingClaimDecision{}, fmt.Errorf(
 			"list HarnessGitopsProjectMapping claims: %w",
@@ -256,8 +256,8 @@ func (r *Reconciler) resolveProjectMappingClaimWithProvisional(
 
 func (r *Reconciler) projectMappingClaimPriority(
 	ctx context.Context,
-	current *infrastructurev1.HarnessGitopsProjectMapping,
-	candidate *infrastructurev1.HarnessGitopsProjectMapping,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMapping,
+	candidate *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 	reader client.Reader,
@@ -269,7 +269,7 @@ func (r *Reconciler) projectMappingClaimPriority(
 			return projectMappingClaimOwned, true, nil
 		case isUncertainCreationState(candidate.Status.CreationState):
 			return projectMappingClaimCreateCandidate, true, nil
-		case candidate.Status.Remote.Ownership == infrastructurev1.OwnershipExternal:
+		case candidate.Status.Remote.Ownership == infrastructurev1alpha1.OwnershipExternal:
 			// A remote ID has one Kubernetes binding even if its tuple later
 			// drifts out of band. Delete the External binding before another
 			// resource can adopt that ID.
@@ -300,7 +300,7 @@ func (r *Reconciler) projectMappingClaimPriority(
 
 func (r *Reconciler) isProvisionalExternalProjectMappingClaim(
 	ctx context.Context,
-	candidate *infrastructurev1.HarnessGitopsProjectMapping,
+	candidate *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	reader client.Reader,
 ) (bool, error) {
@@ -326,14 +326,14 @@ func (r *Reconciler) isProvisionalExternalProjectMappingClaim(
 
 func resolveProjectMappingClaimRequest(
 	ctx context.Context,
-	candidate *infrastructurev1.HarnessGitopsProjectMapping,
+	candidate *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	reader client.Reader,
 ) (ProjectMappingRequest, bool, error) {
 	agentName := strings.TrimSpace(candidate.Spec.AgentRef.Name)
 	if agentName == "" {
 		return ProjectMappingRequest{}, false, nil
 	}
-	agent := &infrastructurev1.HarnessGitopsAgent{}
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := reader.Get(ctx, client.ObjectKey{
 		Namespace: candidate.Namespace,
 		Name:      agentName,
@@ -375,8 +375,8 @@ func projectMappingClaimLess(left projectMappingClaim, right projectMappingClaim
 }
 
 func sameProjectMappingResource(
-	left *infrastructurev1.HarnessGitopsProjectMapping,
-	right *infrastructurev1.HarnessGitopsProjectMapping,
+	left *infrastructurev1alpha1.HarnessGitopsProjectMapping,
+	right *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) bool {
 	if left == nil || right == nil ||
 		left.Namespace != right.Namespace ||

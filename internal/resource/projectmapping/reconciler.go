@@ -30,13 +30,13 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
-	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
+	resourceutil "harness.io/harness-gitops-agent-operator/internal/resource"
 )
 
 const (
-	harnessProjectMappingFinalizer = "infrastructure.kandylis.co.uk/project-mapping-finalizer"
+	harnessProjectMappingFinalizer = "infrastructure.harness.io/project-mapping-finalizer"
 	projectMappingReadyCondition   = "Ready"
 	harnessAgentHealthyCondition   = "Healthy"
 	harnessAgentReasonAbsent       = "AgentAbsent"
@@ -61,9 +61,9 @@ const (
 	projectMappingReasonCleanupFailed      = "CleanupFailed"
 )
 
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsprojectmappings,verbs=get;list;watch;update;patch;delete
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsprojectmappings/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsprojectmappings/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsprojectmappings,verbs=get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsprojectmappings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsprojectmappings/finalizers,verbs=update
 // +kubebuilder:rbac:groups=argoproj.io,resources=appprojects,verbs=get
 
 // mappingReconcileAPI is owned by the reconciler so its tests do not depend on
@@ -103,7 +103,7 @@ func (r *Reconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
 ) (ctrl.Result, error) {
-	mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
+	mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 	if err := r.Get(ctx, req.NamespacedName, mapping); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -121,7 +121,7 @@ func (r *Reconciler) Reconcile(
 		return result, err
 	}
 
-	agent := &infrastructurev1.HarnessGitopsAgent{}
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	agentKey := client.ObjectKey{
 		Namespace: mapping.Namespace,
 		Name:      strings.TrimSpace(mapping.Spec.AgentRef.Name),
@@ -234,7 +234,7 @@ func (r *Reconciler) Reconcile(
 
 func (r *Reconciler) reconcileHarnessMapping(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	session *harnessapi.Session,
 	request ProjectMappingRequest,
 ) (ctrl.Result, error) {
@@ -255,7 +255,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			projectMappingReasonDuplicateMapping,
 			"Multiple exact Harness mappings exist and no recorded or adopted ID selects one",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				preserveMappingFailureState(status, request, startedCreationState)
 			},
 		)
@@ -271,8 +271,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 				strings.TrimSpace(mapping.Spec.AdoptMappingID),
 			)
 		}
-		if startedCreationState == infrastructurev1.MappingCreationPending ||
-			startedCreationState == infrastructurev1.MappingCreationOutcomeUnknown {
+		if startedCreationState == infrastructurev1alpha1.MappingCreationPending ||
+			startedCreationState == infrastructurev1alpha1.MappingCreationOutcomeUnknown {
 			message = "Create ownership is unresolved and the observed AppProject mapping has a different tuple"
 		}
 		statusErr := r.setReady(
@@ -281,7 +281,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			reason,
 			message,
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				preserveMappingFailureState(status, request, startedCreationState)
 			},
 		)
@@ -296,7 +296,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			projectMappingReasonAdoptionFailed,
 			fmt.Sprintf("Harness mapping %q does not exist with the complete desired tuple", adoptID),
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				preserveMappingFailureState(status, request, startedCreationState)
 			},
 		)
@@ -304,7 +304,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 	}
 
 	switch startedCreationState {
-	case infrastructurev1.MappingCreationPending:
+	case infrastructurev1alpha1.MappingCreationPending:
 		if mapping.Status.Remote != nil &&
 			strings.TrimSpace(mapping.Status.Remote.MappingID) != "" {
 			statusErr := r.setReady(
@@ -323,21 +323,21 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			projectMappingReasonCreateUnknown,
 			"A persisted create attempt has no returned ID; set spec.adoptMappingId to claim an exact observed mapping",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-				status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+				status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 				status.Remote = unresolvedRemoteStatus(status.Remote, request)
 			},
 		)
 		return ctrl.Result{RequeueAfter: r.resyncInterval()}, statusErr
 
-	case infrastructurev1.MappingCreationOutcomeUnknown:
+	case infrastructurev1alpha1.MappingCreationOutcomeUnknown:
 		statusErr := r.setReady(
 			ctx,
 			mapping,
 			metav1.ConditionFalse,
 			projectMappingReasonCreateUnknown,
 			"Mapping create outcome is unknown; set spec.adoptMappingId after verifying the Harness mapping",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				status.Remote = unresolvedRemoteStatus(status.Remote, request)
 			},
 		)
@@ -352,8 +352,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 		metav1.ConditionFalse,
 		projectMappingReasonCreatePending,
 		"Persisted Harness mapping create intent",
-		func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-			status.CreationState = infrastructurev1.MappingCreationPending
+		func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+			status.CreationState = infrastructurev1alpha1.MappingCreationPending
 			status.Remote = remoteStatusForRequest(request)
 		},
 	); err != nil {
@@ -370,8 +370,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 				metav1.ConditionFalse,
 				projectMappingReasonCreateUnknown,
 				"Harness mapping create may have committed; explicit adoption is required",
-				func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-					status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+				func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+					status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 					status.Remote = unresolvedRemoteStatus(status.Remote, request)
 				},
 			)
@@ -384,7 +384,7 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			projectMappingReasonVerificationFailed,
 			"Harness rejected the mapping create request",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				status.CreationState = ""
 				status.Remote = remoteStatusForRequest(request)
 			},
@@ -400,8 +400,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 			metav1.ConditionFalse,
 			projectMappingReasonCreateUnknown,
 			"Harness accepted the create without returning an ID; explicit adoption is required",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-				status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+				status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 				status.Remote = unresolvedRemoteStatus(status.Remote, request)
 			},
 		)
@@ -418,8 +418,8 @@ func (r *Reconciler) reconcileHarnessMapping(
 		metav1.ConditionFalse,
 		projectMappingReasonMappingCreated,
 		"Harness accepted the mapping create; waiting for exact-ID verification",
-		func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-			status.CreationState = infrastructurev1.MappingCreationPending
+		func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+			status.CreationState = infrastructurev1alpha1.MappingCreationPending
 			status.Remote = remoteStatusForRequest(request)
 			status.Remote.MappingID = createdID
 			status.Remote.Agent.Identifier = returnedAgentID
@@ -430,14 +430,14 @@ func (r *Reconciler) reconcileHarnessMapping(
 
 func (r *Reconciler) reconcileSelectedMapping(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	observed ProjectMapping,
 ) (ctrl.Result, error) {
 	observedID := strings.TrimSpace(observed.Identifier)
 	adoptID := strings.TrimSpace(mapping.Spec.AdoptMappingID)
 	rememberedID := ""
-	rememberedOwnership := infrastructurev1.ResourceOwnership("")
+	rememberedOwnership := infrastructurev1alpha1.ResourceOwnership("")
 	if mapping.Status.Remote != nil {
 		rememberedID = strings.TrimSpace(mapping.Status.Remote.MappingID)
 		rememberedOwnership = mapping.Status.Remote.Ownership
@@ -447,7 +447,7 @@ func (r *Reconciler) reconcileSelectedMapping(
 		status metav1.ConditionStatus,
 		reason string,
 		message string,
-		mutate func(*infrastructurev1.HarnessGitopsProjectMappingStatus),
+		mutate func(*infrastructurev1alpha1.HarnessGitopsProjectMappingStatus),
 	) (ctrl.Result, error) {
 		statusErr := r.setReady(ctx, mapping, status, reason, message, mutate)
 		return ctrl.Result{RequeueAfter: r.resyncInterval()}, statusErr
@@ -482,7 +482,7 @@ func (r *Reconciler) reconcileSelectedMapping(
 				metav1.ConditionTrue,
 				projectMappingReasonMappingVerified,
 				"The owned Harness mapping still matches the complete desired tuple",
-				func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+				func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 					status.CreationState = ""
 					// Keep the exact cleanup snapshot that originally proved
 					// ownership; mutable adoption input cannot rewrite it.
@@ -516,8 +516,8 @@ func (r *Reconciler) reconcileSelectedMapping(
 					rememberedID,
 					adoptID,
 				),
-				func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-					status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+				func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+					status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 					status.Remote = unresolvedRemoteStatus(status.Remote, request)
 				},
 			)
@@ -538,13 +538,13 @@ func (r *Reconciler) reconcileSelectedMapping(
 					metav1.ConditionTrue,
 					projectMappingReasonMappingAdopted,
 					"The exact create candidate was explicitly adopted",
-					func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+					func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 						status.CreationState = ""
 						status.Remote = status.Remote.DeepCopy()
-						status.Remote.Ownership = infrastructurev1.OwnershipAdopted
+						status.Remote.Ownership = infrastructurev1alpha1.OwnershipAdopted
 					},
 				)
-			case mapping.Status.CreationState == infrastructurev1.MappingCreationPending:
+			case mapping.Status.CreationState == infrastructurev1alpha1.MappingCreationPending:
 				won, result, err := r.requireProjectMappingClaim(
 					ctx,
 					mapping,
@@ -558,10 +558,10 @@ func (r *Reconciler) reconcileSelectedMapping(
 					metav1.ConditionTrue,
 					projectMappingReasonMappingVerified,
 					"The controller-created Harness mapping was verified by its returned ID",
-					func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+					func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 						status.CreationState = ""
 						status.Remote = status.Remote.DeepCopy()
-						status.Remote.Ownership = infrastructurev1.OwnershipManaged
+						status.Remote.Ownership = infrastructurev1alpha1.OwnershipManaged
 					},
 				)
 			}
@@ -581,8 +581,8 @@ func (r *Reconciler) reconcileSelectedMapping(
 			metav1.ConditionFalse,
 			reason,
 			message,
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-				status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+				status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 				status.Remote = unresolvedRemoteStatus(status.Remote, request)
 			},
 		)
@@ -602,10 +602,10 @@ func (r *Reconciler) reconcileSelectedMapping(
 			metav1.ConditionTrue,
 			projectMappingReasonMappingAdopted,
 			"The exact Harness mapping was explicitly adopted",
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				status.CreationState = ""
 				status.Remote = remoteStatusForObserved(request, observed)
-				status.Remote.Ownership = infrastructurev1.OwnershipAdopted
+				status.Remote.Ownership = infrastructurev1alpha1.OwnershipAdopted
 			},
 		)
 	}
@@ -625,8 +625,8 @@ func (r *Reconciler) reconcileSelectedMapping(
 			metav1.ConditionFalse,
 			reason,
 			message,
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
-				status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
+				status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 				status.Remote = remoteStatusForObserved(request, observed)
 				status.Remote.Ownership = ""
 			},
@@ -642,7 +642,7 @@ func (r *Reconciler) reconcileSelectedMapping(
 				adoptID,
 				observedID,
 			),
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				status.CreationState = ""
 				status.Remote = remoteStatusForObserved(request, observed)
 			},
@@ -662,10 +662,10 @@ func (r *Reconciler) reconcileSelectedMapping(
 		metav1.ConditionTrue,
 		projectMappingReasonMappingExternal,
 		"The exact Harness mapping exists and is treated as external",
-		func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+		func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 			status.CreationState = ""
 			status.Remote = remoteStatusForObserved(request, observed)
-			status.Remote.Ownership = infrastructurev1.OwnershipExternal
+			status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 		},
 	)
 }

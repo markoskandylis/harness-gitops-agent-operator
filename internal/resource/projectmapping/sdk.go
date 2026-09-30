@@ -10,7 +10,7 @@ import (
 	"github.com/antihax/optional"
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 var (

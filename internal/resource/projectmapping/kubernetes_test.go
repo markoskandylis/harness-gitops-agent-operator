@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 type recordingMappingFieldIndexer struct {
@@ -42,7 +42,7 @@ func TestRegisterProjectMappingAgentRefIndex(t *testing.T) {
 	if err := registerProjectMappingAgentRefIndex(context.Background(), indexer); err != nil {
 		t.Fatalf("register index: %v", err)
 	}
-	if _, ok := indexer.object.(*infrastructurev1.HarnessGitopsProjectMapping); !ok {
+	if _, ok := indexer.object.(*infrastructurev1alpha1.HarnessGitopsProjectMapping); !ok {
 		t.Fatalf("indexed object = %T, want HarnessGitopsProjectMapping", indexer.object)
 	}
 	if indexer.field != projectMappingAgentRefIndexField {
@@ -63,7 +63,7 @@ func TestRegisterProjectMappingAgentRefIndex(t *testing.T) {
 	if got := indexer.extractor(mapping); got != nil {
 		t.Fatalf("empty reference index values = %#v, want nil", got)
 	}
-	if got := indexer.extractor(&infrastructurev1.HarnessGitopsAgent{}); got != nil {
+	if got := indexer.extractor(&infrastructurev1alpha1.HarnessGitopsAgent{}); got != nil {
 		t.Fatalf("wrong object index values = %#v, want nil", got)
 	}
 
@@ -88,13 +88,13 @@ func TestAgentEventMapsToIndexedSameNamespaceMappingsInStableOrder(t *testing.T)
 		WithScheme(scheme).
 		WithObjects(objects...).
 		WithIndex(
-			&infrastructurev1.HarnessGitopsProjectMapping{},
+			&infrastructurev1alpha1.HarnessGitopsProjectMapping{},
 			projectMappingAgentRefIndexField,
 			projectMappingAgentRefIndexValues,
 		).
 		Build()
 
-	agent := &infrastructurev1.HarnessGitopsAgent{ObjectMeta: metav1.ObjectMeta{
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{ObjectMeta: metav1.ObjectMeta{
 		Name:      "shared-agent",
 		Namespace: "tenant-a",
 	}}
@@ -129,7 +129,7 @@ func TestAgentEventMappingHandlesWrongObjectsAndListErrors(t *testing.T) {
 	if got := mapRequests(context.Background(), &corev1.Secret{}); got != nil {
 		t.Fatalf("wrong object requests = %#v, want nil", got)
 	}
-	agent := &infrastructurev1.HarnessGitopsAgent{ObjectMeta: metav1.ObjectMeta{
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{ObjectMeta: metav1.ObjectMeta{
 		Name:      "shared-agent",
 		Namespace: "tenant-a",
 	}}
@@ -144,7 +144,7 @@ func relationshipTestScheme(t *testing.T) *runtime.Scheme {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core scheme: %v", err)
 	}
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add operator scheme: %v", err)
 	}
 	return scheme
@@ -154,14 +154,14 @@ func relationshipTestMapping(
 	name string,
 	namespace string,
 	agentName string,
-) *infrastructurev1.HarnessGitopsProjectMapping {
-	return &infrastructurev1.HarnessGitopsProjectMapping{
+) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+	return &infrastructurev1alpha1.HarnessGitopsProjectMapping{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrastructurev1.HarnessGitopsProjectMappingSpec{
-			AgentRef: infrastructurev1.HarnessGitopsAgentReference{
+		Spec: infrastructurev1alpha1.HarnessGitopsProjectMappingSpec{
+			AgentRef: infrastructurev1alpha1.HarnessGitopsAgentReference{
 				Name: agentName,
 			},
 			AppProject: "default",

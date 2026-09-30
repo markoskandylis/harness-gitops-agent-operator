@@ -32,9 +32,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
-	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
+	resourceutil "harness.io/harness-gitops-agent-operator/internal/resource"
 )
 
 const gitopsAgentTokenSecretKey = "GITOPS_AGENT_TOKEN"
@@ -81,13 +81,13 @@ func (r *Reconciler) harnessAgentAPI() agentAPI {
 	return SDKAgentAPI{}
 }
 
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=infrastructure.kandylis.co.uk,resources=harnessgitopsagents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsagents,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsagents/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=infrastructure.harness.io,resources=harnessgitopsagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	agentCR := &infrastructurev1.HarnessGitopsAgent{}
+	agentCR := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := r.Get(ctx, req.NamespacedName, agentCR); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -114,7 +114,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 func (r *Reconciler) reconcileReady(
 	ctx context.Context,
 	req ctrl.Request,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	existingAgentIdentifier string,
 	existingAgentMode bool,
 ) (ctrl.Result, error) {
@@ -122,9 +122,9 @@ func (r *Reconciler) reconcileReady(
 
 	if existingAgentMode {
 		if agentCR.Status.AgentIdentifier != existingAgentIdentifier ||
-			agentCR.Status.AgentOwnership != infrastructurev1.OwnershipExternal {
+			agentCR.Status.AgentOwnership != infrastructurev1alpha1.OwnershipExternal {
 			agentCR.Status.AgentIdentifier = existingAgentIdentifier
-			agentCR.Status.AgentOwnership = infrastructurev1.OwnershipExternal
+			agentCR.Status.AgentOwnership = infrastructurev1alpha1.OwnershipExternal
 			if err := r.Status().Update(ctx, agentCR); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -151,7 +151,7 @@ func (r *Reconciler) reconcileReady(
 	if !registrationRequired &&
 		agentDone &&
 		!tokenSecretReady &&
-		agentCR.Status.AgentOwnership != infrastructurev1.OwnershipManaged {
+		agentCR.Status.AgentOwnership != infrastructurev1alpha1.OwnershipManaged {
 		return ctrl.Result{}, fmt.Errorf(
 			"%w for %q; create a replacement HarnessGitopsAgent CR with "+
 				"spec.existingAgentIdentifier set to reference the running Agent",
@@ -220,7 +220,7 @@ func (r *Reconciler) reconcileReady(
 	return r.agentHealthResult(ctx, agentCR, harnessSession, agentIdentifier, nil)
 }
 
-func agentIdentifierForStatus(agentCR *infrastructurev1.HarnessGitopsAgent) string {
+func agentIdentifierForStatus(agentCR *infrastructurev1alpha1.HarnessGitopsAgent) string {
 	if identifier := strings.TrimSpace(agentCR.Status.AgentIdentifier); identifier != "" {
 		return identifier
 	}
@@ -245,7 +245,7 @@ func SessionForAgent(
 	ctx context.Context,
 	reader client.Reader,
 	apiKeySecretNamespace string,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 ) (*harnessapi.Session, error) {
 	secretNamespace := strings.TrimSpace(apiKeySecretNamespace)
 	if secretNamespace == "" {
@@ -260,7 +260,7 @@ func SessionForAgent(
 
 func (r *Reconciler) upsertAgentTokenSecret(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	secretName string,
 	agentToken string,
 ) error {
@@ -293,7 +293,7 @@ func (r *Reconciler) upsertAgentTokenSecret(
 
 func (r *Reconciler) tokenSecretExists(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	secretName string,
 ) bool {
 	existing := &corev1.Secret{}
@@ -311,10 +311,10 @@ func (r *Reconciler) tokenSecretExists(
 // SetupWithManager registers the Agent controller and its dependent watches.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrastructurev1.HarnessGitopsAgent{}).
+		For(&infrastructurev1alpha1.HarnessGitopsAgent{}).
 		Owns(&corev1.Secret{}).
 		Watches(
-			&infrastructurev1.HarnessGitopsProjectMapping{},
+			&infrastructurev1alpha1.HarnessGitopsProjectMapping{},
 			handler.EnqueueRequestsFromMapFunc(projectMappingToAgentRequests),
 		).
 		Named("harnessgitopsagent").
@@ -325,7 +325,7 @@ func projectMappingToAgentRequests(
 	_ context.Context,
 	object client.Object,
 ) []reconcile.Request {
-	mapping, ok := object.(*infrastructurev1.HarnessGitopsProjectMapping)
+	mapping, ok := object.(*infrastructurev1alpha1.HarnessGitopsProjectMapping)
 	if !ok {
 		return nil
 	}

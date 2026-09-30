@@ -28,8 +28,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 type projectMappingSelection struct {
@@ -42,10 +42,10 @@ type projectMappingSelection struct {
 func selectProjectMapping(
 	mappings []ProjectMapping,
 	request ProjectMappingRequest,
-	resource *infrastructurev1.HarnessGitopsProjectMapping,
+	resource *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) projectMappingSelection {
 	rememberedID := ""
-	rememberedOwnership := infrastructurev1.ResourceOwnership("")
+	rememberedOwnership := infrastructurev1alpha1.ResourceOwnership("")
 	if resource.Status.Remote != nil {
 		rememberedID = strings.TrimSpace(resource.Status.Remote.MappingID)
 		rememberedOwnership = resource.Status.Remote.Ownership
@@ -152,16 +152,16 @@ func projectMappingMatches(
 
 func remoteStatusForRequest(
 	request ProjectMappingRequest,
-) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
-	return &infrastructurev1.HarnessGitopsProjectMappingRemoteStatus{
-		Agent: infrastructurev1.HarnessGitopsProjectMappingAgentStatus{
+) *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus {
+	return &infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus{
+		Agent: infrastructurev1alpha1.HarnessGitopsProjectMappingAgentStatus{
 			Identifier: strings.TrimSpace(request.AgentIdentifier),
 			AccountID:  strings.TrimSpace(request.AccountIdentifier),
 			Scope:      strings.ToUpper(strings.TrimSpace(request.AgentScope)),
 			OrgID:      strings.TrimSpace(request.Agent.OrgIdentifier),
 			ProjectID:  strings.TrimSpace(request.Agent.ProjectIdentifier),
 		},
-		Target: infrastructurev1.HarnessGitopsProjectMappingTargetStatus{
+		Target: infrastructurev1alpha1.HarnessGitopsProjectMappingTargetStatus{
 			OrgID:                strings.TrimSpace(request.Mapping.OrgIdentifier),
 			ProjectID:            strings.TrimSpace(request.Mapping.ProjectIdentifier),
 			AppProject:           strings.TrimSpace(request.ArgoProjectName),
@@ -173,7 +173,7 @@ func remoteStatusForRequest(
 func remoteStatusForObserved(
 	request ProjectMappingRequest,
 	mapping ProjectMapping,
-) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
+) *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus {
 	remote := remoteStatusForRequest(request)
 	remote.MappingID = strings.TrimSpace(mapping.Identifier)
 	if agentID := strings.TrimSpace(mapping.AgentIdentifier); agentID != "" {
@@ -183,9 +183,9 @@ func remoteStatusForObserved(
 }
 
 func unresolvedRemoteStatus(
-	current *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus,
+	current *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus,
 	request ProjectMappingRequest,
-) *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus {
+) *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus {
 	if current == nil {
 		return remoteStatusForRequest(request)
 	}
@@ -194,20 +194,20 @@ func unresolvedRemoteStatus(
 	return remote
 }
 
-func isDeletionOwnership(ownership infrastructurev1.ResourceOwnership) bool {
-	return ownership == infrastructurev1.OwnershipManaged ||
-		ownership == infrastructurev1.OwnershipAdopted
+func isDeletionOwnership(ownership infrastructurev1alpha1.ResourceOwnership) bool {
+	return ownership == infrastructurev1alpha1.OwnershipManaged ||
+		ownership == infrastructurev1alpha1.OwnershipAdopted
 }
 
-func isUncertainCreationState(state infrastructurev1.MappingCreationState) bool {
-	return state == infrastructurev1.MappingCreationPending ||
-		state == infrastructurev1.MappingCreationOutcomeUnknown
+func isUncertainCreationState(state infrastructurev1alpha1.MappingCreationState) bool {
+	return state == infrastructurev1alpha1.MappingCreationPending ||
+		state == infrastructurev1alpha1.MappingCreationOutcomeUnknown
 }
 
 func preserveMappingFailureState(
-	status *infrastructurev1.HarnessGitopsProjectMappingStatus,
+	status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus,
 	request ProjectMappingRequest,
-	startedCreationState infrastructurev1.MappingCreationState,
+	startedCreationState infrastructurev1alpha1.MappingCreationState,
 ) {
 	if status.Remote != nil && isDeletionOwnership(status.Remote.Ownership) {
 		// A failed observation must not erase the cleanup identity for a remote
@@ -215,7 +215,7 @@ func preserveMappingFailureState(
 		return
 	}
 	if isUncertainCreationState(startedCreationState) {
-		status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+		status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 		status.Remote = unresolvedRemoteStatus(status.Remote, request)
 		return
 	}
@@ -225,11 +225,11 @@ func preserveMappingFailureState(
 
 func (r *Reconciler) setReady(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	conditionStatus metav1.ConditionStatus,
 	reason string,
 	message string,
-	mutate func(*infrastructurev1.HarnessGitopsProjectMappingStatus),
+	mutate func(*infrastructurev1alpha1.HarnessGitopsProjectMappingStatus),
 ) error {
 	before := mapping.DeepCopy().Status
 	if mutate != nil {
@@ -251,7 +251,7 @@ func (r *Reconciler) setReady(
 
 func (r *Reconciler) returnAPIError(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	message string,
 	err error,
 ) (ctrl.Result, error) {
@@ -275,7 +275,7 @@ func (r *Reconciler) apiReader() client.Reader {
 
 func (r *Reconciler) sessionForAgent(
 	ctx context.Context,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 ) (*harnessapi.Session, error) {
 	secretNamespace := strings.TrimSpace(r.APIKeySecretNamespace)
 	if secretNamespace == "" {

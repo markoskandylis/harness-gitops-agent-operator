@@ -17,8 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 const (
@@ -110,8 +110,8 @@ type mappingReconcilerFixture struct {
 func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 	tests := []struct {
 		scope          string
-		configureAgent func(*infrastructurev1.HarnessGitopsAgent)
-		configureMap   func(*infrastructurev1.HarnessGitopsProjectMapping)
+		configureAgent func(*infrastructurev1alpha1.HarnessGitopsAgent)
+		configureMap   func(*infrastructurev1alpha1.HarnessGitopsProjectMapping)
 		wantAgent      Scope
 		wantTarget     Scope
 		returnedAgent  string
@@ -130,7 +130,7 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 		},
 		{
 			scope: agentScopeOrg,
-			configureMap: func(mapping *infrastructurev1.HarnessGitopsProjectMapping) {
+			configureMap: func(mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 			},
 			wantAgent: Scope{
@@ -144,12 +144,12 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 		},
 		{
 			scope: agentScopeAccount,
-			configureAgent: func(agent *infrastructurev1.HarnessGitopsAgent) {
+			configureAgent: func(agent *infrastructurev1alpha1.HarnessGitopsAgent) {
 				// These deliberately differ from the target and must not leak.
 				agent.Spec.OrgId = "account-agent-org-must-not-leak"
 				agent.Spec.ProjectId = "account-agent-project-must-not-leak"
 			},
-			configureMap: func(mapping *infrastructurev1.HarnessGitopsProjectMapping) {
+			configureMap: func(mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 				mapping.Spec.OrgID = mappingControllerTargetOrgID
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 				mapping.Spec.AutoCreateServiceEnv = true
@@ -185,7 +185,7 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 
 			fixture.mappingAPI.onCreate = func() {
 				current := fixture.getMapping(t)
-				if current.Status.CreationState != infrastructurev1.MappingCreationPending {
+				if current.Status.CreationState != infrastructurev1alpha1.MappingCreationPending {
 					t.Fatalf("creationState at POST = %q, want Pending", current.Status.CreationState)
 				}
 				if current.Status.Remote == nil {
@@ -220,7 +220,7 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 			}
 
 			current := fixture.getMapping(t)
-			if current.Status.CreationState != infrastructurev1.MappingCreationPending {
+			if current.Status.CreationState != infrastructurev1alpha1.MappingCreationPending {
 				t.Fatalf("creationState after POST = %q, want Pending", current.Status.CreationState)
 			}
 			if current.Status.Remote == nil {
@@ -255,7 +255,7 @@ func TestProjectMappingCreateLifecycleAtEveryAgentScope(t *testing.T) {
 			if current.Status.CreationState != "" {
 				t.Fatalf("creationState after verification = %q, want empty", current.Status.CreationState)
 			}
-			if current.Status.Remote.Ownership != infrastructurev1.OwnershipManaged {
+			if current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipManaged {
 				t.Fatalf("ownership = %q, want Managed", current.Status.Remote.Ownership)
 			}
 			assertReadyCondition(t, current, metav1.ConditionTrue, projectMappingReasonMappingVerified)
@@ -267,20 +267,20 @@ func TestProjectMappingPreexistingAndAdoptionOwnership(t *testing.T) {
 	tests := []struct {
 		name          string
 		adoptID       string
-		wantOwnership infrastructurev1.ResourceOwnership
+		wantOwnership infrastructurev1alpha1.ResourceOwnership
 		wantReady     metav1.ConditionStatus
 		wantReason    string
 	}{
 		{
 			name:          "preexisting exact mapping is external",
-			wantOwnership: infrastructurev1.OwnershipExternal,
+			wantOwnership: infrastructurev1alpha1.OwnershipExternal,
 			wantReady:     metav1.ConditionTrue,
 			wantReason:    projectMappingReasonMappingExternal,
 		},
 		{
 			name:          "exact ID is adopted",
 			adoptID:       "existing-mapping",
-			wantOwnership: infrastructurev1.OwnershipAdopted,
+			wantOwnership: infrastructurev1alpha1.OwnershipAdopted,
 			wantReady:     metav1.ConditionTrue,
 			wantReason:    projectMappingReasonMappingAdopted,
 		},
@@ -381,7 +381,7 @@ func TestOwnedProjectMappingAdoptionCannotTransferOwnership(t *testing.T) {
 			mapping.Spec.AdoptMappingID = "mapping-b"
 			mapping.Status.Remote = remoteStatusForRequest(request)
 			mapping.Status.Remote.MappingID = mappingSelectionID
-			mapping.Status.Remote.Ownership = infrastructurev1.OwnershipManaged
+			mapping.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipManaged
 			wantRemote := mapping.Status.Remote.DeepCopy()
 			rows := test.liveRows(request)
 
@@ -417,7 +417,7 @@ func TestOwnedProjectMappingAdoptionCannotTransferOwnership(t *testing.T) {
 func TestWrongAdoptionPreservesOutcomeUnknownCandidate(t *testing.T) {
 	agent, mapping, request := newAccountMappingControllerTest(t)
 	mapping.Spec.AdoptMappingID = "mapping-b"
-	mapping.Status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+	mapping.Status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 	mapping.Status.Remote = remoteStatusForRequest(request)
 	mapping.Status.Remote.MappingID = mappingSelectionID
 	wantRemote := mapping.Status.Remote.DeepCopy()
@@ -438,7 +438,7 @@ func TestWrongAdoptionPreservesOutcomeUnknownCandidate(t *testing.T) {
 	}
 
 	current := fixture.getMapping(t)
-	if current.Status.CreationState != infrastructurev1.MappingCreationOutcomeUnknown {
+	if current.Status.CreationState != infrastructurev1alpha1.MappingCreationOutcomeUnknown {
 		t.Fatalf("creationState = %q, want OutcomeUnknown", current.Status.CreationState)
 	}
 	if current.Status.Remote.Ownership != "" ||
@@ -461,7 +461,7 @@ func TestProjectMappingTupleMismatchPreservesOwnedCleanupSnapshot(t *testing.T) 
 	agent, mapping, request := newAccountMappingControllerTest(t)
 	mapping.Status.Remote = remoteStatusForRequest(request)
 	mapping.Status.Remote.MappingID = mappingSelectionID
-	mapping.Status.Remote.Ownership = infrastructurev1.OwnershipManaged
+	mapping.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipManaged
 	wantRemote := mapping.Status.Remote.DeepCopy()
 	mismatch := exactMappingForRequest(request, mappingSelectionID, "account."+mappingControllerAgentID)
 	mismatch.AutoCreateServiceEnv = !request.AutoCreateServiceEnv
@@ -489,9 +489,9 @@ func TestProjectMappingTupleMismatchPreservesOwnedCleanupSnapshot(t *testing.T) 
 }
 
 func TestProjectMappingExactReplacementDoesNotHideOwnedTupleMismatch(t *testing.T) {
-	for _, ownership := range []infrastructurev1.ResourceOwnership{
-		infrastructurev1.OwnershipManaged,
-		infrastructurev1.OwnershipAdopted,
+	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
+		infrastructurev1alpha1.OwnershipManaged,
+		infrastructurev1alpha1.OwnershipAdopted,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			agent, mapping, request := newAccountMappingControllerTest(t)
@@ -547,9 +547,9 @@ func TestProjectMappingExactReplacementDoesNotHideOwnedTupleMismatch(t *testing.
 }
 
 func TestProjectMappingSameIDPreservesEstablishedOwnership(t *testing.T) {
-	for _, ownership := range []infrastructurev1.ResourceOwnership{
-		infrastructurev1.OwnershipManaged,
-		infrastructurev1.OwnershipAdopted,
+	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
+		infrastructurev1alpha1.OwnershipManaged,
+		infrastructurev1alpha1.OwnershipAdopted,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			agent, mapping, request := newAccountMappingControllerTest(t)
@@ -596,7 +596,7 @@ func TestProjectMappingPendingRestartNeverCreates(t *testing.T) {
 	mapping.Spec.OrgID = mappingControllerTargetOrgID
 	mapping.Spec.ProjectID = mappingControllerTargetProject
 	request := resolvedRequestForTest(t, agent, mapping)
-	mapping.Status.CreationState = infrastructurev1.MappingCreationPending
+	mapping.Status.CreationState = infrastructurev1alpha1.MappingCreationPending
 	mapping.Status.Remote = remoteStatusForRequest(request)
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
@@ -610,7 +610,7 @@ func TestProjectMappingPendingRestartNeverCreates(t *testing.T) {
 		t.Fatalf("create calls = %d, want 0", fixture.mappingAPI.createCalls)
 	}
 	current := fixture.getMapping(t)
-	if current.Status.CreationState != infrastructurev1.MappingCreationOutcomeUnknown {
+	if current.Status.CreationState != infrastructurev1alpha1.MappingCreationOutcomeUnknown {
 		t.Fatalf("creationState = %q, want OutcomeUnknown", current.Status.CreationState)
 	}
 	if current.Status.Remote == nil ||
@@ -646,15 +646,15 @@ func TestProjectMappingConfirmedCreateOutcomeUnknownDoesNotRetry(t *testing.T) {
 		t.Fatalf("create calls after retry = %d, want 1", fixture.mappingAPI.createCalls)
 	}
 	current := fixture.getMapping(t)
-	if current.Status.CreationState != infrastructurev1.MappingCreationOutcomeUnknown {
+	if current.Status.CreationState != infrastructurev1alpha1.MappingCreationOutcomeUnknown {
 		t.Fatalf("creationState = %q, want OutcomeUnknown", current.Status.CreationState)
 	}
 }
 
 func TestProjectMappingExternalRecreationDemotesOwnership(t *testing.T) {
-	for _, ownership := range []infrastructurev1.ResourceOwnership{
-		infrastructurev1.OwnershipManaged,
-		infrastructurev1.OwnershipAdopted,
+	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
+		infrastructurev1alpha1.OwnershipManaged,
+		infrastructurev1alpha1.OwnershipAdopted,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			agent, mapping, request := newAccountMappingControllerTest(t)
@@ -674,7 +674,7 @@ func TestProjectMappingExternalRecreationDemotesOwnership(t *testing.T) {
 			if current.Status.Remote.MappingID != "new-external-id" {
 				t.Fatalf("mapping ID = %q, want new-external-id", current.Status.Remote.MappingID)
 			}
-			if current.Status.Remote.Ownership != infrastructurev1.OwnershipExternal {
+			if current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipExternal {
 				t.Fatalf("ownership = %q, want External", current.Status.Remote.Ownership)
 			}
 		})
@@ -796,7 +796,7 @@ func TestProjectMappingDuplicateFailurePreservesOwnedCleanupSnapshot(t *testing.
 	agent, mapping, request := newAccountMappingControllerTest(t)
 	mapping.Status.Remote = remoteStatusForRequest(request)
 	mapping.Status.Remote.MappingID = "owned-row-no-longer-listed"
-	mapping.Status.Remote.Ownership = infrastructurev1.OwnershipAdopted
+	mapping.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipAdopted
 	wantRemote := mapping.Status.Remote.DeepCopy()
 
 	fixture := newMappingReconcilerFixture(t, agent, mapping, true)
@@ -916,7 +916,7 @@ func TestProjectMappingReadyStatusUpdateIsNoOpAware(t *testing.T) {
 	observed := exactMappingForRequest(request, "stable-external", "account."+mappingControllerAgentID)
 	mapping.Status.ObservedGeneration = mapping.Generation
 	mapping.Status.Remote = remoteStatusForObserved(request, observed)
-	mapping.Status.Remote.Ownership = infrastructurev1.OwnershipExternal
+	mapping.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 	apiMeta.SetStatusCondition(&mapping.Status.Conditions, metav1.Condition{
 		Type:               projectMappingReadyCondition,
 		Status:             metav1.ConditionTrue,
@@ -1004,7 +1004,7 @@ func TestProjectMappingCreateRequiresDurableStatusWrites(t *testing.T) {
 			t.Fatalf("create calls = %d, want 1", fixture.mappingAPI.createCalls)
 		}
 		current := fixture.getMapping(t)
-		if current.Status.CreationState != infrastructurev1.MappingCreationPending ||
+		if current.Status.CreationState != infrastructurev1alpha1.MappingCreationPending ||
 			current.Status.Remote == nil ||
 			current.Status.Remote.MappingID != "" {
 			t.Fatalf("durable pre-create intent was not retained: %#v", current.Status)
@@ -1017,7 +1017,7 @@ func TestProjectMappingCreateRequiresDurableStatusWrites(t *testing.T) {
 			t.Fatalf("create calls after recovery = %d, want 1", fixture.mappingAPI.createCalls)
 		}
 		current = fixture.getMapping(t)
-		if current.Status.CreationState != infrastructurev1.MappingCreationOutcomeUnknown ||
+		if current.Status.CreationState != infrastructurev1alpha1.MappingCreationOutcomeUnknown ||
 			current.Status.Remote == nil ||
 			current.Status.Remote.MappingID != created.Identifier ||
 			current.Status.Remote.Ownership != "" {
@@ -1028,8 +1028,8 @@ func TestProjectMappingCreateRequiresDurableStatusWrites(t *testing.T) {
 
 func newMappingReconcilerFixture(
 	t *testing.T,
-	agent *infrastructurev1.HarnessGitopsAgent,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	includeAppProject bool,
 	extraObjects ...client.Object,
 ) *mappingReconcilerFixture {
@@ -1038,7 +1038,7 @@ func newMappingReconcilerFixture(
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core scheme: %v", err)
 	}
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add operator scheme: %v", err)
 	}
 
@@ -1067,8 +1067,8 @@ func newMappingReconcilerFixture(
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(
-			&infrastructurev1.HarnessGitopsAgent{},
-			&infrastructurev1.HarnessGitopsProjectMapping{},
+			&infrastructurev1alpha1.HarnessGitopsAgent{},
+			&infrastructurev1alpha1.HarnessGitopsProjectMapping{},
 		).
 		WithObjects(objects...).
 		WithInterceptorFuncs(interceptor.Funcs{
@@ -1118,9 +1118,9 @@ func (f *mappingReconcilerFixture) reconcile(t *testing.T) (ctrl.Result, error) 
 
 func (f *mappingReconcilerFixture) getMapping(
 	t *testing.T,
-) *infrastructurev1.HarnessGitopsProjectMapping {
+) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
 	t.Helper()
-	mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
+	mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 	if err := f.reconciler.Get(context.Background(), f.key, mapping); err != nil {
 		t.Fatalf("get mapping: %v", err)
 	}
@@ -1129,9 +1129,9 @@ func (f *mappingReconcilerFixture) getMapping(
 
 func (f *mappingReconcilerFixture) getMappingOrNil(
 	t *testing.T,
-) *infrastructurev1.HarnessGitopsProjectMapping {
+) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
 	t.Helper()
-	mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
+	mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 	err := f.reconciler.Get(context.Background(), f.key, mapping)
 	if client.IgnoreNotFound(err) != nil {
 		t.Fatalf("get mapping: %v", err)
@@ -1142,14 +1142,14 @@ func (f *mappingReconcilerFixture) getMappingOrNil(
 	return mapping
 }
 
-func newMappingControllerAgent(scope string) *infrastructurev1.HarnessGitopsAgent {
-	agent := &infrastructurev1.HarnessGitopsAgent{
+func newMappingControllerAgent(scope string) *infrastructurev1alpha1.HarnessGitopsAgent {
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       mappingControllerAgentName,
 			Namespace:  mappingControllerNamespace,
 			Generation: 3,
 		},
-		Spec: infrastructurev1.HarnessGitopsAgentSpec{
+		Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 			Name:            "Mapping Agent",
 			Identifier:      "agent-spec-identifier",
 			AccountId:       mappingControllerAccountID,
@@ -1160,9 +1160,9 @@ func newMappingControllerAgent(scope string) *infrastructurev1.HarnessGitopsAgen
 			Scope:           scope,
 			ApiKeySecretRef: mappingControllerAPISecret,
 		},
-		Status: infrastructurev1.HarnessGitopsAgentStatus{
+		Status: infrastructurev1alpha1.HarnessGitopsAgentStatus{
 			AgentIdentifier: mappingControllerAgentID,
-			AgentOwnership:  infrastructurev1.OwnershipManaged,
+			AgentOwnership:  infrastructurev1alpha1.OwnershipManaged,
 		},
 	}
 	apiMeta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
@@ -1175,15 +1175,15 @@ func newMappingControllerAgent(scope string) *infrastructurev1.HarnessGitopsAgen
 	return agent
 }
 
-func newMappingControllerResource() *infrastructurev1.HarnessGitopsProjectMapping {
-	return &infrastructurev1.HarnessGitopsProjectMapping{
+func newMappingControllerResource() *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+	return &infrastructurev1alpha1.HarnessGitopsProjectMapping{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "payments-mapping",
 			Namespace:  mappingControllerNamespace,
 			Generation: 7,
 		},
-		Spec: infrastructurev1.HarnessGitopsProjectMappingSpec{
-			AgentRef: infrastructurev1.HarnessGitopsAgentReference{
+		Spec: infrastructurev1alpha1.HarnessGitopsProjectMappingSpec{
+			AgentRef: infrastructurev1alpha1.HarnessGitopsAgentReference{
 				Name: mappingControllerAgentName,
 			},
 			AppProject: mappingControllerAppProject,
@@ -1194,8 +1194,8 @@ func newMappingControllerResource() *infrastructurev1.HarnessGitopsProjectMappin
 func newAccountMappingControllerTest(
 	t *testing.T,
 ) (
-	*infrastructurev1.HarnessGitopsAgent,
-	*infrastructurev1.HarnessGitopsProjectMapping,
+	*infrastructurev1alpha1.HarnessGitopsAgent,
+	*infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	ProjectMappingRequest,
 ) {
 	t.Helper()
@@ -1209,8 +1209,8 @@ func newAccountMappingControllerTest(
 
 func resolvedRequestForTest(
 	t *testing.T,
-	agent *infrastructurev1.HarnessGitopsAgent,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) ProjectMappingRequest {
 	t.Helper()
 	request, err := resolveProjectMappingRequest(agent, mapping)
@@ -1238,7 +1238,7 @@ func exactMappingForRequest(
 
 func assertReadyCondition(
 	t *testing.T,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	status metav1.ConditionStatus,
 	reason string,
 ) {

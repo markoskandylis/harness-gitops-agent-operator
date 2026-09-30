@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	agentCRDName   = "harnessgitopsagents.infrastructure.kandylis.co.uk"
-	mappingCRDName = "harnessgitopsprojectmappings.infrastructure.kandylis.co.uk"
+	agentCRDName   = "harnessgitopsagents.infrastructure.harness.io"
+	mappingCRDName = "harnessgitopsprojectmappings.infrastructure.harness.io"
 )
 
 func TestRenderedCRDsMatchGeneratedSpecs(t *testing.T) {
@@ -28,12 +28,12 @@ func TestRenderedCRDsMatchGeneratedSpecs(t *testing.T) {
 	}{
 		{
 			name:      agentCRDName,
-			generated: "../../config/crd/bases/infrastructure.kandylis.co.uk_harnessgitopsagents.yaml",
+			generated: "../../config/crd/bases/infrastructure.harness.io_harnessgitopsagents.yaml",
 			shortName: "hga",
 		},
 		{
 			name:      mappingCRDName,
-			generated: "../../config/crd/bases/infrastructure.kandylis.co.uk_harnessgitopsprojectmappings.yaml",
+			generated: "../../config/crd/bases/infrastructure.harness.io_harnessgitopsprojectmappings.yaml",
 			shortName: "hgapm",
 		},
 	} {

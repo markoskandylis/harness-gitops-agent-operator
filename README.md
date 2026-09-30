@@ -46,7 +46,16 @@ finalizers provide safe external-resource deletion ordering.
 
 ## Resource model
 
-API group/version: `infrastructure.kandylis.co.uk/v1`
+API group/version: `infrastructure.harness.io/v1alpha1`
+
+This is an alpha API; future releases may introduce incompatible changes.
+It replaces the previous `v1` API group, so this
+release requires a fresh installation or a planned migration. The controller
+does not reconcile resources in the old group. A Helm upgrade alone does not
+migrate them; Agent ownership tags and token Secret owner references depend on
+the original resource UID. Keep the old controller available for any required
+cleanup, and use a controller image built from this API version with these charts.
+Finalizer keys and the leader-election lease name now use the `harness.io` domain.
 
 | Kind | Short name | Purpose |
 |---|---|---|
@@ -80,7 +89,7 @@ This account-scoped example keeps Agent identity at account level and gives each
 Mapping an independent target:
 
 ```yaml
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsAgent
 metadata:
   name: account-agent
@@ -95,7 +104,7 @@ spec:
   apiKeySecretRef: harness-api-key-secret
   tokenSecretRef: account-agent-token
 ---
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsProjectMapping
 metadata:
   name: platform-payments
@@ -108,7 +117,7 @@ spec:
   projectId: payments
   autoCreateServiceEnv: false
 ---
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsProjectMapping
 metadata:
   name: commerce-orders
@@ -137,8 +146,8 @@ the auto-create flow must run. See the
 
 More examples:
 
-- [PROJECT-scoped Agent](config/samples/infrastructure_v1_harnessgitopsagent.yaml)
-- [Mapping resource](config/samples/infrastructure_v1_harnessgitopsprojectmapping.yaml)
+- [PROJECT-scoped Agent](config/samples/infrastructure_v1alpha1_harnessgitopsagent.yaml)
+- [Mapping resource](config/samples/infrastructure_v1alpha1_harnessgitopsprojectmapping.yaml)
 - [Bootstrap values](charts/harness-gitops-agent-bootstrap/values-example.yaml)
 - [ACCOUNT scope with many mappings](charts/harness-gitops-agent-bootstrap/values-account-scope-example.yaml)
 

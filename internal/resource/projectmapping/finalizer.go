@@ -30,8 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	resourceutil "harness.io/harness-gitops-agent-operator/internal/resource"
 )
 
 // Harness mapping reads can lag a successful create. A Mapping deleted
@@ -40,9 +40,9 @@ import (
 const projectMappingCreateVisibilityGracePeriod = 30 * time.Second
 
 type mappingCleanupIdentity struct {
-	remote               *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus
+	remote               *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus
 	mappingID            string
-	recoveryOwnership    infrastructurev1.ResourceOwnership
+	recoveryOwnership    infrastructurev1alpha1.ResourceOwnership
 	pendingReturnedID    bool
 	removeFinalizer      bool
 	ownershipBlockReason string
@@ -50,7 +50,7 @@ type mappingCleanupIdentity struct {
 
 func (r *Reconciler) finalizeProjectMapping(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(mapping, harnessProjectMappingFinalizer) {
 		return ctrl.Result{}, nil
@@ -94,7 +94,7 @@ func (r *Reconciler) finalizeProjectMapping(
 		return claimResult, claimErr
 	}
 
-	agent := &infrastructurev1.HarnessGitopsAgent{}
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	agentKey := client.ObjectKey{
 		Namespace: mapping.Namespace,
 		Name:      strings.TrimSpace(mapping.Spec.AgentRef.Name),
@@ -208,7 +208,7 @@ func (r *Reconciler) finalizeProjectMapping(
 	if identity.recoveryOwnership != "" {
 		reason := projectMappingReasonMappingVerified
 		message := "Recovered ownership of the controller-created Harness mapping before cleanup"
-		if identity.recoveryOwnership == infrastructurev1.OwnershipAdopted {
+		if identity.recoveryOwnership == infrastructurev1alpha1.OwnershipAdopted {
 			reason = projectMappingReasonMappingAdopted
 			message = "Recovered ownership of the explicitly adopted Harness mapping before cleanup"
 		}
@@ -218,7 +218,7 @@ func (r *Reconciler) finalizeProjectMapping(
 			metav1.ConditionTrue,
 			reason,
 			message,
-			func(status *infrastructurev1.HarnessGitopsProjectMappingStatus) {
+			func(status *infrastructurev1alpha1.HarnessGitopsProjectMappingStatus) {
 				status.CreationState = ""
 				status.Remote = identity.remote.DeepCopy()
 				status.Remote.MappingID = mappingID
@@ -242,7 +242,7 @@ func (r *Reconciler) finalizeProjectMapping(
 }
 
 func resolveMappingCleanupIdentity(
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) mappingCleanupIdentity {
 	remote := mapping.Status.Remote
 	if remote == nil {
@@ -267,7 +267,7 @@ func resolveMappingCleanupIdentity(
 	adoptID := strings.TrimSpace(mapping.Spec.AdoptMappingID)
 	rememberedID := strings.TrimSpace(remote.MappingID)
 	identity.pendingReturnedID =
-		mapping.Status.CreationState == infrastructurev1.MappingCreationPending &&
+		mapping.Status.CreationState == infrastructurev1alpha1.MappingCreationPending &&
 			rememberedID != ""
 	if adoptID != "" && rememberedID != "" && adoptID != rememberedID {
 		identity.ownershipBlockReason = fmt.Sprintf(
@@ -281,11 +281,11 @@ func resolveMappingCleanupIdentity(
 	switch {
 	case adoptID != "":
 		identity.mappingID = adoptID
-		identity.recoveryOwnership = infrastructurev1.OwnershipAdopted
-	case mapping.Status.CreationState == infrastructurev1.MappingCreationPending &&
+		identity.recoveryOwnership = infrastructurev1alpha1.OwnershipAdopted
+	case mapping.Status.CreationState == infrastructurev1alpha1.MappingCreationPending &&
 		rememberedID != "":
 		identity.mappingID = rememberedID
-		identity.recoveryOwnership = infrastructurev1.OwnershipManaged
+		identity.recoveryOwnership = infrastructurev1alpha1.OwnershipManaged
 	default:
 		identity.ownershipBlockReason = fmt.Sprintf(
 			"Cannot safely clean up a mapping while its create state is %s; set spec.adoptMappingId to an exact Harness mapping ID",
@@ -296,7 +296,7 @@ func resolveMappingCleanupIdentity(
 }
 
 func projectMappingCreateVisibilityGraceRemaining(
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) time.Duration {
 	if mapping == nil ||
 		mapping.DeletionTimestamp == nil ||
@@ -316,7 +316,7 @@ func projectMappingCreateVisibilityGraceRemaining(
 // only its Kubernetes finalizer; it never deletes the shared remote row.
 func (r *Reconciler) authorizeProjectMappingCleanup(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	request ProjectMappingRequest,
 	mappingID string,
 ) (bool, ctrl.Result, error) {
@@ -345,7 +345,7 @@ func (r *Reconciler) authorizeProjectMappingCleanup(
 }
 
 func projectMappingCleanupRequest(
-	remote *infrastructurev1.HarnessGitopsProjectMappingRemoteStatus,
+	remote *infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus,
 ) (ProjectMappingRequest, string, error) {
 	if remote == nil {
 		return ProjectMappingRequest{}, "", fmt.Errorf("remote status is empty")
@@ -436,14 +436,14 @@ func projectMappingCleanupRequest(
 
 func (r *Reconciler) removeProjectMappingFinalizer(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 ) (ctrl.Result, error) {
 	return ctrl.Result{}, resourceutil.RemoveFinalizer(ctx, r.Client, mapping, harnessProjectMappingFinalizer)
 }
 
 func (r *Reconciler) blockMappingCleanup(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	message string,
 	cause error,
 ) (ctrl.Result, error) {
@@ -463,7 +463,7 @@ func (r *Reconciler) blockMappingCleanup(
 
 func (r *Reconciler) failMappingCleanup(
 	ctx context.Context,
-	mapping *infrastructurev1.HarnessGitopsProjectMapping,
+	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	message string,
 	cause error,
 ) (ctrl.Result, error) {

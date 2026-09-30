@@ -1,4 +1,4 @@
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsProjectMapping
 metadata:
   labels:

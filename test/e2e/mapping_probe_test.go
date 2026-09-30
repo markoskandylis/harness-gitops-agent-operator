@@ -45,8 +45,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	"github.com/markoskandylis/harness-gitops-agent-operator/test/utils"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	"harness.io/harness-gitops-agent-operator/test/utils"
 )
 
 const (
@@ -95,7 +95,7 @@ var _ = Describe("Helm-installed mapping and remote Git plugin", Serial, Label("
 		restConfig.Timeout = mappingProbeRequestTimeout
 		scheme := runtime.NewScheme()
 		Expect(corev1.AddToScheme(scheme)).To(Succeed())
-		Expect(infrastructurev1.AddToScheme(scheme)).To(Succeed())
+		Expect(infrastructurev1alpha1.AddToScheme(scheme)).To(Succeed())
 		k8sClient, err := client.New(restConfig, client.Options{Scheme: scheme})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -103,7 +103,7 @@ var _ = Describe("Helm-installed mapping and remote Git plugin", Serial, Label("
 		Eventually(func(g Gomega) {
 			ctx, cancel := context.WithTimeout(context.Background(), mappingProbeRequestTimeout)
 			defer cancel()
-			agent := &infrastructurev1.HarnessGitopsAgent{}
+			agent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 			err := k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: cfg.agentNamespace,
 				Name:      cfg.agentName,
@@ -113,10 +113,10 @@ var _ = Describe("Helm-installed mapping and remote Git plugin", Serial, Label("
 			g.Expect(strings.TrimSpace(agent.Spec.ProjectId)).To(BeEmpty())
 			g.Expect(agent.Spec.ApiKeySecretRef).To(Equal(cfg.apiKeySecret))
 			g.Expect(agent.Spec.TokenSecretRef).To(Equal(cfg.tokenSecret))
-			g.Expect(agent.Finalizers).To(ContainElement("infrastructure.kandylis.co.uk/finalizer"))
+			g.Expect(agent.Finalizers).To(ContainElement("infrastructure.harness.io/finalizer"))
 			g.Expect(strings.TrimSpace(agent.Status.AgentIdentifier)).NotTo(BeEmpty())
 
-			mapping := &infrastructurev1.HarnessGitopsProjectMapping{}
+			mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 			err = k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: cfg.agentNamespace,
 				Name:      cfg.mappingName,
@@ -126,7 +126,7 @@ var _ = Describe("Helm-installed mapping and remote Git plugin", Serial, Label("
 			g.Expect(mapping.Spec.ProjectID).To(Equal(cfg.projectID))
 			g.Expect(mapping.Spec.AppProject).To(Equal(cfg.appProject))
 			g.Expect(mapping.Finalizers).To(
-				ContainElement("infrastructure.kandylis.co.uk/project-mapping-finalizer"),
+				ContainElement("infrastructure.harness.io/project-mapping-finalizer"),
 			)
 			g.Expect(mapping.Status.Remote).NotTo(BeNil())
 			if mapping.Status.Remote != nil {

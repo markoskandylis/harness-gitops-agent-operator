@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 var _ = Describe("HarnessGitopsProjectMapping API", func() {
@@ -36,19 +36,19 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 
 		Expect(mapping.Spec.AutoCreateServiceEnv).To(BeFalse())
 
-		mapping.Status = infrastructurev1.HarnessGitopsProjectMappingStatus{
+		mapping.Status = infrastructurev1alpha1.HarnessGitopsProjectMappingStatus{
 			ObservedGeneration: mapping.Generation,
-			Remote: &infrastructurev1.HarnessGitopsProjectMappingRemoteStatus{
+			Remote: &infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus{
 				MappingID: "mapping-id",
-				Ownership: infrastructurev1.OwnershipManaged,
-				Agent: infrastructurev1.HarnessGitopsProjectMappingAgentStatus{
+				Ownership: infrastructurev1alpha1.OwnershipManaged,
+				Agent: infrastructurev1alpha1.HarnessGitopsProjectMappingAgentStatus{
 					Identifier: "agent-id",
 					AccountID:  "account-id",
 					Scope:      "ACCOUNT",
 					OrgID:      "",
 					ProjectID:  "",
 				},
-				Target: infrastructurev1.HarnessGitopsProjectMappingTargetStatus{
+				Target: infrastructurev1alpha1.HarnessGitopsProjectMappingTargetStatus{
 					OrgID:                "org-id",
 					ProjectID:            "project-id",
 					AppProject:           "payments",
@@ -66,16 +66,16 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 		}
 		Expect(k8sClient.Status().Update(ctx, mapping)).To(Succeed())
 
-		current := &infrastructurev1.HarnessGitopsProjectMapping{}
+		current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(mapping), current)).To(Succeed())
 		Expect(current.Status.Remote).NotTo(BeNil())
 		Expect(current.Status.Remote.MappingID).To(Equal("mapping-id"))
-		Expect(current.Status.Remote.Ownership).To(Equal(infrastructurev1.OwnershipManaged))
+		Expect(current.Status.Remote.Ownership).To(Equal(infrastructurev1alpha1.OwnershipManaged))
 
-		current.Status.Remote.Ownership = infrastructurev1.OwnershipAdopted
+		current.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipAdopted
 		Expect(k8sClient.Status().Update(ctx, current)).To(Succeed())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(mapping), current)).To(Succeed())
-		Expect(current.Status.Remote.Ownership).To(Equal(infrastructurev1.OwnershipAdopted))
+		Expect(current.Status.Remote.Ownership).To(Equal(infrastructurev1alpha1.OwnershipAdopted))
 	})
 
 	It("persists a resolved create intent before Harness returns an ID", func() {
@@ -83,16 +83,16 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 		Expect(k8sClient.Create(ctx, mapping)).To(Succeed())
 		defer deleteProjectMapping(mapping.Name)
 
-		mapping.Status = infrastructurev1.HarnessGitopsProjectMappingStatus{
+		mapping.Status = infrastructurev1alpha1.HarnessGitopsProjectMappingStatus{
 			ObservedGeneration: mapping.Generation,
-			CreationState:      infrastructurev1.MappingCreationPending,
-			Remote: &infrastructurev1.HarnessGitopsProjectMappingRemoteStatus{
-				Agent: infrastructurev1.HarnessGitopsProjectMappingAgentStatus{
+			CreationState:      infrastructurev1alpha1.MappingCreationPending,
+			Remote: &infrastructurev1alpha1.HarnessGitopsProjectMappingRemoteStatus{
+				Agent: infrastructurev1alpha1.HarnessGitopsProjectMappingAgentStatus{
 					Identifier: "account.agent-id",
 					AccountID:  "account-id",
 					Scope:      "ACCOUNT",
 				},
-				Target: infrastructurev1.HarnessGitopsProjectMappingTargetStatus{
+				Target: infrastructurev1alpha1.HarnessGitopsProjectMappingTargetStatus{
 					OrgID:      "target-org",
 					ProjectID:  "target-project",
 					AppProject: "payments",
@@ -101,9 +101,9 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 		}
 		Expect(k8sClient.Status().Update(ctx, mapping)).To(Succeed())
 
-		current := &infrastructurev1.HarnessGitopsProjectMapping{}
+		current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(mapping), current)).To(Succeed())
-		Expect(current.Status.CreationState).To(Equal(infrastructurev1.MappingCreationPending))
+		Expect(current.Status.CreationState).To(Equal(infrastructurev1alpha1.MappingCreationPending))
 		Expect(current.Status.Remote).NotTo(BeNil())
 		Expect(current.Status.Remote.MappingID).To(BeEmpty())
 		Expect(current.Status.Remote.Ownership).To(BeEmpty())
@@ -116,7 +116,7 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 		Expect(k8sClient.Create(ctx, mapping)).To(Succeed())
 		defer deleteProjectMapping(mapping.Name)
 
-		mapping.Status.CreationState = infrastructurev1.MappingCreationPending
+		mapping.Status.CreationState = infrastructurev1alpha1.MappingCreationPending
 		err := k8sClient.Status().Update(ctx, mapping)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("creation state requires the resolved remote tuple"))
@@ -161,35 +161,35 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 
 		mutations := []struct {
 			name   string
-			mutate func(*infrastructurev1.HarnessGitopsProjectMapping)
+			mutate func(*infrastructurev1alpha1.HarnessGitopsProjectMapping)
 		}{
 			{
 				name: "agent reference",
-				mutate: func(current *infrastructurev1.HarnessGitopsProjectMapping) {
+				mutate: func(current *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 					current.Spec.AgentRef.Name = "other-agent"
 				},
 			},
 			{
 				name: "AppProject",
-				mutate: func(current *infrastructurev1.HarnessGitopsProjectMapping) {
+				mutate: func(current *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 					current.Spec.AppProject = "orders"
 				},
 			},
 			{
 				name: "organization",
-				mutate: func(current *infrastructurev1.HarnessGitopsProjectMapping) {
+				mutate: func(current *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 					current.Spec.OrgID = "org-b"
 				},
 			},
 			{
 				name: "project",
-				mutate: func(current *infrastructurev1.HarnessGitopsProjectMapping) {
+				mutate: func(current *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 					current.Spec.ProjectID = "project-b"
 				},
 			},
 			{
 				name: "automatic service and environment creation",
-				mutate: func(current *infrastructurev1.HarnessGitopsProjectMapping) {
+				mutate: func(current *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
 					current.Spec.AutoCreateServiceEnv = true
 				},
 			},
@@ -197,7 +197,7 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 
 		for _, mutation := range mutations {
 			By("rejecting a change to " + mutation.name)
-			current := &infrastructurev1.HarnessGitopsProjectMapping{}
+			current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(mapping), current)).To(Succeed())
 			mutation.mutate(current)
 			err := k8sClient.Update(ctx, current)
@@ -242,14 +242,14 @@ var _ = Describe("HarnessGitopsProjectMapping API", func() {
 	})
 })
 
-func newValidProjectMapping(name string) *infrastructurev1.HarnessGitopsProjectMapping {
-	return &infrastructurev1.HarnessGitopsProjectMapping{
+func newValidProjectMapping(name string) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+	return &infrastructurev1alpha1.HarnessGitopsProjectMapping{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "default",
 		},
-		Spec: infrastructurev1.HarnessGitopsProjectMappingSpec{
-			AgentRef: infrastructurev1.HarnessGitopsAgentReference{
+		Spec: infrastructurev1alpha1.HarnessGitopsProjectMappingSpec{
+			AgentRef: infrastructurev1alpha1.HarnessGitopsAgentReference{
 				Name: "shared-agent",
 			},
 			AppProject: "payments",
@@ -267,8 +267,8 @@ func newUnstructuredProjectMapping(name string, spec map[string]any) *unstructur
 		},
 	}
 	mapping.SetGroupVersionKind(schema.GroupVersionKind{
-		Group:   infrastructurev1.GroupVersion.Group,
-		Version: infrastructurev1.GroupVersion.Version,
+		Group:   infrastructurev1alpha1.GroupVersion.Group,
+		Version: infrastructurev1alpha1.GroupVersion.Version,
 		Kind:    "HarnessGitopsProjectMapping",
 	})
 	if spec != nil {
@@ -278,7 +278,7 @@ func newUnstructuredProjectMapping(name string, spec map[string]any) *unstructur
 }
 
 func deleteProjectMapping(name string) {
-	current := &infrastructurev1.HarnessGitopsProjectMapping{}
+	current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 	err := k8sClient.Get(ctx, client.ObjectKey{Namespace: "default", Name: name}, current)
 	if err == nil {
 		Expect(k8sClient.Delete(ctx, current)).To(Succeed())

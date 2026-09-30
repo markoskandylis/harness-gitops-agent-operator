@@ -18,7 +18,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const (
@@ -106,14 +106,14 @@ func registerProjectMappingAgentRefIndex(
 ) error {
 	return indexer.IndexField(
 		ctx,
-		&infrastructurev1.HarnessGitopsProjectMapping{},
+		&infrastructurev1alpha1.HarnessGitopsProjectMapping{},
 		projectMappingAgentRefIndexField,
 		projectMappingAgentRefIndexValues,
 	)
 }
 
 func projectMappingAgentRefIndexValues(object client.Object) []string {
-	mapping, ok := object.(*infrastructurev1.HarnessGitopsProjectMapping)
+	mapping, ok := object.(*infrastructurev1alpha1.HarnessGitopsProjectMapping)
 	if !ok {
 		return nil
 	}
@@ -126,12 +126,12 @@ func projectMappingAgentRefIndexValues(object client.Object) []string {
 
 func agentToProjectMappingRequests(mappingClient client.Client) handler.MapFunc {
 	return func(ctx context.Context, object client.Object) []reconcile.Request {
-		agent, ok := object.(*infrastructurev1.HarnessGitopsAgent)
+		agent, ok := object.(*infrastructurev1alpha1.HarnessGitopsAgent)
 		if !ok {
 			return nil
 		}
 
-		mappings := &infrastructurev1.HarnessGitopsProjectMappingList{}
+		mappings := &infrastructurev1alpha1.HarnessGitopsProjectMappingList{}
 		if err := mappingClient.List(
 			ctx,
 			mappings,
@@ -180,9 +180,9 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.appProjectClient = appProjectClient
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&infrastructurev1.HarnessGitopsProjectMapping{}).
+		For(&infrastructurev1alpha1.HarnessGitopsProjectMapping{}).
 		Watches(
-			&infrastructurev1.HarnessGitopsAgent{},
+			&infrastructurev1alpha1.HarnessGitopsAgent{},
 			handler.EnqueueRequestsFromMapFunc(
 				agentToProjectMappingRequests(mgr.GetClient()),
 			),

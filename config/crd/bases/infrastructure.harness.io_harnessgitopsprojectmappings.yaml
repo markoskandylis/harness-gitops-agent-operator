@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: harnessgitopsprojectmappings.infrastructure.kandylis.co.uk
+  name: harnessgitopsprojectmappings.infrastructure.harness.io
 spec:
-  group: infrastructure.kandylis.co.uk
+  group: infrastructure.harness.io
   names:
     kind: HarnessGitopsProjectMapping
     listKind: HarnessGitopsProjectMappingList
@@ -35,7 +35,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: HarnessGitopsProjectMapping is one AppProject to Harness project
