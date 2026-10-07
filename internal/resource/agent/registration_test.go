@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 type fakeAgentRegistrationAPI struct {
@@ -198,7 +198,7 @@ func TestAgentRegistrationRecoversCommittedCreateAfterStatusFailure(t *testing.T
 	}
 
 	persisted := fixture.getAgent(t)
-	if persisted.Status.CreationState != infrastructurev1.AgentCreationPending {
+	if persisted.Status.CreationState != infrastructurev1alpha1.AgentCreationPending {
 		t.Fatalf("creation state = %q, want Pending", persisted.Status.CreationState)
 	}
 	if persisted.Status.AgentOwnership != "" {
@@ -254,7 +254,7 @@ func TestAgentRegistrationRecoversTimeoutByUIDTag(t *testing.T) {
 	}
 
 	persisted := fixture.getAgent(t)
-	if persisted.Status.CreationState != infrastructurev1.AgentCreationOutcomeUnknown {
+	if persisted.Status.CreationState != infrastructurev1alpha1.AgentCreationOutcomeUnknown {
 		t.Fatalf("creation state = %q, want OutcomeUnknown", persisted.Status.CreationState)
 	}
 
@@ -291,7 +291,7 @@ func TestAgentRegistrationRecoversCreateConflictOnNextLookup(t *testing.T) {
 		t.Fatalf("requeueAfter = %s, want %s", result.RequeueAfter, agentRegistrationRetryInterval)
 	}
 	persisted := fixture.getAgent(t)
-	if persisted.Status.CreationState != infrastructurev1.AgentCreationOutcomeUnknown {
+	if persisted.Status.CreationState != infrastructurev1alpha1.AgentCreationOutcomeUnknown {
 		t.Fatalf("creation state = %q, want OutcomeUnknown", persisted.Status.CreationState)
 	}
 
@@ -454,7 +454,7 @@ func TestAgentRegistrationRejectsWrongOwnershipProof(t *testing.T) {
 				t.Fatalf("resolve calls = %d, want 0", fixture.agentAPI.resolveCalls)
 			}
 			persisted := fixture.getAgent(t)
-			if persisted.Status.CreationState != infrastructurev1.AgentCreationOutcomeUnknown {
+			if persisted.Status.CreationState != infrastructurev1alpha1.AgentCreationOutcomeUnknown {
 				t.Fatalf("creation state = %q, want OutcomeUnknown", persisted.Status.CreationState)
 			}
 		})
@@ -464,7 +464,7 @@ func TestAgentRegistrationRejectsWrongOwnershipProof(t *testing.T) {
 func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 	tests := []struct {
 		name          string
-		lookup        func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult
+		lookup        func(*infrastructurev1alpha1.HarnessGitopsAgent) AgentLookupResult
 		lookupErr     error
 		wantDelete    int
 		wantErr       bool
@@ -472,20 +472,20 @@ func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 	}{
 		{
 			name: "matching tagged Agent is deleted",
-			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+			lookup: func(agent *infrastructurev1alpha1.HarnessGitopsAgent) AgentLookupResult {
 				return AgentLookupResult{Exists: true, Agent: ownedAgentObservation(agent)}
 			},
 			wantDelete: 1,
 		},
 		{
 			name: "absent Agent is not deleted",
-			lookup: func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+			lookup: func(*infrastructurev1alpha1.HarnessGitopsAgent) AgentLookupResult {
 				return AgentLookupResult{}
 			},
 		},
 		{
 			name: "wrong tag is not deleted",
-			lookup: func(agent *infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+			lookup: func(agent *infrastructurev1alpha1.HarnessGitopsAgent) AgentLookupResult {
 				observed := ownedAgentObservation(agent)
 				observed.Tags[harnessAgentCRUIDTag] = "different-uid"
 				return AgentLookupResult{Exists: true, Agent: observed}
@@ -493,7 +493,7 @@ func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 		},
 		{
 			name: "lookup failure retains finalizer",
-			lookup: func(*infrastructurev1.HarnessGitopsAgent) AgentLookupResult {
+			lookup: func(*infrastructurev1alpha1.HarnessGitopsAgent) AgentLookupResult {
 				return AgentLookupResult{}
 			},
 			lookupErr:     errors.New("temporary Harness failure"),
@@ -505,7 +505,7 @@ func TestUncertainAgentDeletionUsesUIDTaggedLookup(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newAgentRegistrationFixture(t, "ACCOUNT", nil)
-			fixture.agent.Status.CreationState = infrastructurev1.AgentCreationOutcomeUnknown
+			fixture.agent.Status.CreationState = infrastructurev1alpha1.AgentCreationOutcomeUnknown
 			if err := fixture.reconciler.Status().Update(context.Background(), fixture.agent); err != nil {
 				t.Fatalf("persist uncertain status: %v", err)
 			}
@@ -568,7 +568,7 @@ func TestManagedAgentDeletionReverifiesUIDTaggedTuple(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newAgentRegistrationFixture(t, "PROJECT", nil)
 			fixture.agent.Status.AgentIdentifier = fixture.agent.Spec.Identifier
-			fixture.agent.Status.AgentOwnership = infrastructurev1.OwnershipManaged
+			fixture.agent.Status.AgentOwnership = infrastructurev1alpha1.OwnershipManaged
 			if err := fixture.reconciler.Status().Update(
 				context.Background(),
 				fixture.agent,
@@ -682,7 +682,7 @@ type agentRegistrationFixture struct {
 	reconciler *Reconciler
 	client     *statusFailureClient
 	agentAPI   *fakeAgentRegistrationAPI
-	agent      *infrastructurev1.HarnessGitopsAgent
+	agent      *infrastructurev1alpha1.HarnessGitopsAgent
 }
 
 func newAgentRegistrationFixture(
@@ -693,7 +693,7 @@ func newAgentRegistrationFixture(
 	t.Helper()
 
 	scheme := runtime.NewScheme()
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add API scheme: %v", err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -710,7 +710,7 @@ func newAgentRegistrationFixture(
 	}
 	baseClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).
+		WithStatusSubresource(&infrastructurev1alpha1.HarnessGitopsAgent{}).
 		WithObjects(agent, apiKey).
 		Build()
 	statusClient := &statusFailureClient{
@@ -726,7 +726,7 @@ func newAgentRegistrationFixture(
 		},
 	}
 
-	persisted := &infrastructurev1.HarnessGitopsAgent{}
+	persisted := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := statusClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(agent),
@@ -748,15 +748,15 @@ func newAgentRegistrationFixture(
 	}
 }
 
-func registrationTestAgent(scope string) *infrastructurev1.HarnessGitopsAgent {
-	agent := &infrastructurev1.HarnessGitopsAgent{
+func registrationTestAgent(scope string) *infrastructurev1alpha1.HarnessGitopsAgent {
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "registration-agent",
 			Namespace:  "agent-namespace",
 			UID:        types.UID("cr-uid-741"),
 			Finalizers: []string{harnessAgentFinalizer},
 		},
-		Spec: infrastructurev1.HarnessGitopsAgentSpec{
+		Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 			Name:            "Registration Agent",
 			Identifier:      "agent-identifier-711",
 			Operator:        "ARGO",
@@ -777,7 +777,7 @@ func registrationTestAgent(scope string) *infrastructurev1.HarnessGitopsAgent {
 }
 
 func ownedAgentObservation(
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 ) Agent {
 	observed := harnessAgentFor(agent, agent.Spec.Identifier)
 	observed.Tags = map[string]string{
@@ -789,9 +789,9 @@ func ownedAgentObservation(
 
 func (f *agentRegistrationFixture) getAgent(
 	t *testing.T,
-) *infrastructurev1.HarnessGitopsAgent {
+) *infrastructurev1alpha1.HarnessGitopsAgent {
 	t.Helper()
-	persisted := &infrastructurev1.HarnessGitopsAgent{}
+	persisted := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := f.client.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(f.agent),
@@ -808,7 +808,7 @@ func (f *agentRegistrationFixture) assertManagedWithToken(t *testing.T) {
 	if persisted.Status.CreationState != "" {
 		t.Fatalf("creation state = %q, want empty", persisted.Status.CreationState)
 	}
-	if persisted.Status.AgentOwnership != infrastructurev1.OwnershipManaged {
+	if persisted.Status.AgentOwnership != infrastructurev1alpha1.OwnershipManaged {
 		t.Fatalf("ownership = %q, want Managed", persisted.Status.AgentOwnership)
 	}
 	if !harnessapi.IdentifiersEquivalent(

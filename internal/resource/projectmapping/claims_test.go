@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const mappingClaimRemoteID = "shared-harness-mapping"
@@ -77,7 +77,7 @@ func TestProjectMappingClaimConcurrentExternalObservationHasOneWinner(t *testing
 
 			winner = getProjectMappingClaimResource(t, reconciler.Client, winner)
 			if winner.Status.Remote == nil ||
-				winner.Status.Remote.Ownership != infrastructurev1.OwnershipExternal {
+				winner.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipExternal {
 				t.Fatalf("winner ownership = %#v, want External", winner.Status.Remote)
 			}
 			assertReadyCondition(
@@ -89,7 +89,7 @@ func TestProjectMappingClaimConcurrentExternalObservationHasOneWinner(t *testing
 
 			loser = getProjectMappingClaimResource(t, reconciler.Client, loser)
 			if loser.Status.Remote != nil &&
-				loser.Status.Remote.Ownership == infrastructurev1.OwnershipExternal {
+				loser.Status.Remote.Ownership == infrastructurev1alpha1.OwnershipExternal {
 				t.Fatalf("loser retained External ownership: %#v", loser.Status.Remote)
 			}
 			assertReadyCondition(
@@ -156,7 +156,7 @@ func TestProjectMappingWrongAdoptionDoesNotBlockCorrectAdopter(t *testing.T) {
 	}
 	correct = getProjectMappingClaimResource(t, reconciler.Client, correct)
 	if correct.Status.Remote == nil ||
-		correct.Status.Remote.Ownership != infrastructurev1.OwnershipAdopted {
+		correct.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
 		t.Fatalf("correct adopter ownership = %#v, want Adopted", correct.Status.Remote)
 	}
 	assertReadyCondition(
@@ -244,7 +244,7 @@ func TestProjectMappingClaimConcurrentAdoptionHasOneDeterministicWinner(t *testi
 	}
 	first = getProjectMappingClaimResource(t, reconciler.Client, first)
 	if first.Status.Remote == nil ||
-		first.Status.Remote.Ownership != infrastructurev1.OwnershipAdopted {
+		first.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
 		t.Fatalf("winner ownership = %#v, want Adopted", first.Status.Remote)
 	}
 }
@@ -259,7 +259,7 @@ func TestProjectMappingClaimEstablishedOwnerBeatsAdopter(t *testing.T) {
 	owner.Spec.AdoptMappingID = ""
 	owner.Status.Remote = remoteStatusForRequest(request)
 	owner.Status.Remote.MappingID = mappingClaimRemoteID
-	owner.Status.Remote.Ownership = infrastructurev1.OwnershipManaged
+	owner.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipManaged
 
 	_, adopter, adopterRequest := newProjectMappingClaimObjects(
 		t,
@@ -306,7 +306,7 @@ func TestProjectMappingClaimPriorityBeatsCreationOrder(t *testing.T) {
 		owner.Spec.AdoptMappingID = ""
 		owner.Status.Remote = remoteStatusForRequest(request)
 		owner.Status.Remote.MappingID = mappingClaimRemoteID
-		owner.Status.Remote.Ownership = infrastructurev1.OwnershipAdopted
+		owner.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipAdopted
 
 		_, createCandidate, createRequest := newProjectMappingClaimObjects(
 			t,
@@ -315,7 +315,7 @@ func TestProjectMappingClaimPriorityBeatsCreationOrder(t *testing.T) {
 			time.Date(2025, 2, 3, 4, 5, 7, 0, time.UTC),
 		)
 		createCandidate.Spec.AdoptMappingID = ""
-		createCandidate.Status.CreationState = infrastructurev1.MappingCreationPending
+		createCandidate.Status.CreationState = infrastructurev1alpha1.MappingCreationPending
 		createCandidate.Status.Remote = remoteStatusForRequest(createRequest)
 		createCandidate.Status.Remote.MappingID = mappingClaimRemoteID
 
@@ -348,7 +348,7 @@ func TestProjectMappingClaimPriorityBeatsCreationOrder(t *testing.T) {
 			time.Date(2025, 2, 3, 4, 5, 8, 0, time.UTC),
 		)
 		createCandidate.Spec.AdoptMappingID = ""
-		createCandidate.Status.CreationState = infrastructurev1.MappingCreationOutcomeUnknown
+		createCandidate.Status.CreationState = infrastructurev1alpha1.MappingCreationOutcomeUnknown
 		createCandidate.Status.Remote = remoteStatusForRequest(request)
 		createCandidate.Status.Remote.MappingID = mappingClaimRemoteID
 
@@ -389,7 +389,7 @@ func TestProjectMappingClaimPriorityBeatsCreationOrder(t *testing.T) {
 		external.Spec.AdoptMappingID = ""
 		external.Status.Remote = remoteStatusForRequest(request)
 		external.Status.Remote.MappingID = mappingClaimRemoteID
-		external.Status.Remote.Ownership = infrastructurev1.OwnershipExternal
+		external.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 
 		_, adopter, adopterRequest := newProjectMappingClaimObjects(
 			t,
@@ -477,7 +477,7 @@ func TestProjectMappingClaimExternalBindingIsExclusive(t *testing.T) {
 		external.Spec.AdoptMappingID = ""
 		external.Status.Remote = remoteStatusForRequest(request)
 		external.Status.Remote.MappingID = mappingClaimRemoteID
-		external.Status.Remote.Ownership = infrastructurev1.OwnershipExternal
+		external.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 
 		_, adopter, adopterRequest := newProjectMappingClaimObjects(
 			t,
@@ -520,7 +520,7 @@ func TestProjectMappingClaimExternalBindingIsExclusive(t *testing.T) {
 		external.Spec.AdoptMappingID = ""
 		external.Status.Remote = remoteStatusForRequest(request)
 		external.Status.Remote.MappingID = mappingClaimRemoteID
-		external.Status.Remote.Ownership = infrastructurev1.OwnershipExternal
+		external.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 		external.Status.Remote.Target.ProjectID = "out-of-band-project"
 
 		_, adopter, adopterRequest := newProjectMappingClaimObjects(
@@ -563,7 +563,7 @@ func TestProjectMappingClaimExternalBindingIsExclusive(t *testing.T) {
 		)
 		mapping.Status.Remote = remoteStatusForRequest(request)
 		mapping.Status.Remote.MappingID = mappingClaimRemoteID
-		mapping.Status.Remote.Ownership = infrastructurev1.OwnershipExternal
+		mapping.Status.Remote.Ownership = infrastructurev1alpha1.OwnershipExternal
 		reconciler := newProjectMappingClaimReconciler(t, agent, mapping)
 		observed := exactMappingForRequest(
 			request,
@@ -582,7 +582,7 @@ func TestProjectMappingClaimExternalBindingIsExclusive(t *testing.T) {
 		}
 		mapping = getProjectMappingClaimResource(t, reconciler.Client, mapping)
 		if mapping.Status.Remote == nil ||
-			mapping.Status.Remote.Ownership != infrastructurev1.OwnershipAdopted {
+			mapping.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
 			t.Fatalf("ownership = %#v, want Adopted", mapping.Status.Remote)
 		}
 	})
@@ -740,7 +740,7 @@ func TestProjectMappingClaimTieBreakers(t *testing.T) {
 	resource := func(namespace string, name string, uid string) projectMappingClaim {
 		return projectMappingClaim{
 			priority: projectMappingClaimAdoption,
-			resource: &infrastructurev1.HarnessGitopsProjectMapping{
+			resource: &infrastructurev1alpha1.HarnessGitopsProjectMapping{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace:         namespace,
 					Name:              name,
@@ -782,7 +782,7 @@ func (r projectMappingClaimErrorReader) List(
 	list client.ObjectList,
 	options ...client.ListOption,
 ) error {
-	if _, isMappingList := list.(*infrastructurev1.HarnessGitopsProjectMappingList); isMappingList &&
+	if _, isMappingList := list.(*infrastructurev1alpha1.HarnessGitopsProjectMappingList); isMappingList &&
 		r.listErr != nil {
 		return r.listErr
 	}
@@ -795,7 +795,7 @@ func (r projectMappingClaimErrorReader) Get(
 	object client.Object,
 	options ...client.GetOption,
 ) error {
-	if _, isAgent := object.(*infrastructurev1.HarnessGitopsAgent); isAgent &&
+	if _, isAgent := object.(*infrastructurev1alpha1.HarnessGitopsAgent); isAgent &&
 		r.agentGetErr != nil {
 		return r.agentGetErr
 	}
@@ -808,8 +808,8 @@ func newProjectMappingClaimObjects(
 	name string,
 	created time.Time,
 ) (
-	*infrastructurev1.HarnessGitopsAgent,
-	*infrastructurev1.HarnessGitopsProjectMapping,
+	*infrastructurev1alpha1.HarnessGitopsAgent,
+	*infrastructurev1alpha1.HarnessGitopsProjectMapping,
 	ProjectMappingRequest,
 ) {
 	t.Helper()
@@ -834,14 +834,14 @@ func newProjectMappingClaimReconciler(
 ) *Reconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add operator scheme: %v", err)
 	}
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(
-			&infrastructurev1.HarnessGitopsAgent{},
-			&infrastructurev1.HarnessGitopsProjectMapping{},
+			&infrastructurev1alpha1.HarnessGitopsAgent{},
+			&infrastructurev1alpha1.HarnessGitopsProjectMapping{},
 		).
 		WithObjects(objects...).
 		Build()
@@ -855,10 +855,10 @@ func newProjectMappingClaimReconciler(
 func getProjectMappingClaimResource(
 	t *testing.T,
 	reader client.Reader,
-	resource *infrastructurev1.HarnessGitopsProjectMapping,
-) *infrastructurev1.HarnessGitopsProjectMapping {
+	resource *infrastructurev1alpha1.HarnessGitopsProjectMapping,
+) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
 	t.Helper()
-	current := &infrastructurev1.HarnessGitopsProjectMapping{}
+	current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
 	if err := reader.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(resource),

@@ -12,8 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 const (
@@ -69,7 +69,7 @@ func readinessFromAgent(agent nextgen.V1Agent) AgentReadiness {
 
 func (r *Reconciler) refreshAgentHealth(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	agentIdentifier string,
 ) (ctrl.Result, error) {
 	session, err := SessionForAgent(
@@ -83,7 +83,7 @@ func (r *Reconciler) refreshAgentHealth(
 
 func (r *Reconciler) agentHealthResult(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	session *harnessapi.Session,
 	agentIdentifier string,
 	sessionErr error,
@@ -105,7 +105,7 @@ func (r *Reconciler) agentHealthResult(
 // state so callers never mistake a permission or transport failure for absence.
 func (r *Reconciler) publishAgentHealth(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	session *harnessapi.Session,
 	agentIdentifier string,
 	sessionErr error,
@@ -173,7 +173,7 @@ func (r *Reconciler) agentHealthResyncInterval() time.Duration {
 
 func (r *Reconciler) setAgentCondition(
 	ctx context.Context,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 	conditionType string,
 	status metav1.ConditionStatus,
 	reason string,
@@ -195,7 +195,7 @@ func (r *Reconciler) setAgentCondition(
 
 func (r *Reconciler) setAgentWaitingForMappings(
 	ctx context.Context,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 	names []string,
 ) error {
 	return r.setAgentCondition(

@@ -9,8 +9,8 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 const (
@@ -35,7 +35,7 @@ type agentRegistrationOutcome struct {
 func (r *Reconciler) reconcileAgentRegistration(
 	ctx context.Context,
 	session *harnessapi.Session,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	namespace string,
 ) (agentRegistrationOutcome, error) {
 	if strings.TrimSpace(string(agentCR.UID)) == "" {
@@ -51,12 +51,12 @@ func (r *Reconciler) reconcileAgentRegistration(
 		if err := r.setAgentCreationState(
 			ctx,
 			agentCR,
-			infrastructurev1.AgentCreationPending,
+			infrastructurev1alpha1.AgentCreationPending,
 		); err != nil {
 			return agentRegistrationOutcome{done: true}, err
 		}
-	case infrastructurev1.AgentCreationPending,
-		infrastructurev1.AgentCreationOutcomeUnknown:
+	case infrastructurev1alpha1.AgentCreationPending,
+		infrastructurev1alpha1.AgentCreationOutcomeUnknown:
 	default:
 		return agentRegistrationOutcome{done: true}, fmt.Errorf(
 			"unsupported Agent creation state %q",
@@ -74,7 +74,7 @@ func (r *Reconciler) reconcileAgentRegistration(
 			if statusErr := r.setAgentCreationState(
 				ctx,
 				agentCR,
-				infrastructurev1.AgentCreationOutcomeUnknown,
+				infrastructurev1alpha1.AgentCreationOutcomeUnknown,
 			); statusErr != nil {
 				return agentRegistrationOutcome{done: true}, errors.Join(
 					agentRegistrationConflict(agentCR),
@@ -85,7 +85,7 @@ func (r *Reconciler) reconcileAgentRegistration(
 		}
 
 		agentCR.Status.AgentIdentifier = strings.TrimSpace(lookup.Agent.Identifier)
-		agentCR.Status.AgentOwnership = infrastructurev1.OwnershipManaged
+		agentCR.Status.AgentOwnership = infrastructurev1alpha1.OwnershipManaged
 		agentCR.Status.CreationState = ""
 		if err := r.Status().Update(ctx, agentCR); err != nil {
 			return agentRegistrationOutcome{done: true}, err
@@ -105,7 +105,7 @@ func (r *Reconciler) reconcileAgentRegistration(
 			if statusErr := r.setAgentCreationState(
 				ctx,
 				agentCR,
-				infrastructurev1.AgentCreationOutcomeUnknown,
+				infrastructurev1alpha1.AgentCreationOutcomeUnknown,
 			); statusErr != nil {
 				return agentRegistrationOutcome{done: true}, errors.Join(err, statusErr)
 			}
@@ -122,7 +122,7 @@ func (r *Reconciler) reconcileAgentRegistration(
 	}
 
 	agentCR.Status.AgentIdentifier = identifier
-	agentCR.Status.AgentOwnership = infrastructurev1.OwnershipManaged
+	agentCR.Status.AgentOwnership = infrastructurev1alpha1.OwnershipManaged
 	agentCR.Status.CreationState = ""
 	if err := r.Status().Update(ctx, agentCR); err != nil {
 		// The API still contains Pending. The next reconcile verifies the
@@ -138,8 +138,8 @@ func (r *Reconciler) reconcileAgentRegistration(
 
 func (r *Reconciler) setAgentCreationState(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
-	state infrastructurev1.AgentCreationState,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
+	state infrastructurev1alpha1.AgentCreationState,
 ) error {
 	if agentCR.Status.CreationState == state {
 		return nil
@@ -153,7 +153,7 @@ func (r *Reconciler) setAgentCreationState(
 func (r *Reconciler) createHarnessAgent(
 	ctx context.Context,
 	session *harnessapi.Session,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	namespace string,
 ) (string, string, error) {
 	uid := strings.TrimSpace(string(agentCR.UID))
@@ -200,7 +200,7 @@ func (r *Reconciler) createHarnessAgent(
 func (r *Reconciler) lookupAgentOwnedByCR(
 	ctx context.Context,
 	session *harnessapi.Session,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 ) (bool, error) {
 	expected := harnessAgentFor(agentCR, agentCR.Spec.Identifier)
 	lookup, err := r.harnessAgentAPI().Lookup(ctx, session, expected)
@@ -211,7 +211,7 @@ func (r *Reconciler) lookupAgentOwnedByCR(
 }
 
 func harnessAgentFor(
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	identifier string,
 ) Agent {
 	return Agent{
@@ -233,7 +233,7 @@ func harnessAgentFor(
 }
 
 func agentOwnedByCR(
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	expected Agent,
 	observed Agent,
 ) bool {
@@ -259,13 +259,13 @@ func agentTupleEqual(expected, observed Agent) bool {
 		strings.TrimSpace(observed.Operator) == strings.TrimSpace(expected.Operator)
 }
 
-func agentCreationIsUncertain(state infrastructurev1.AgentCreationState) bool {
-	return state == infrastructurev1.AgentCreationPending ||
-		state == infrastructurev1.AgentCreationOutcomeUnknown
+func agentCreationIsUncertain(state infrastructurev1alpha1.AgentCreationState) bool {
+	return state == infrastructurev1alpha1.AgentCreationPending ||
+		state == infrastructurev1alpha1.AgentCreationOutcomeUnknown
 }
 
 func agentRegistrationConflict(
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 ) error {
 	return fmt.Errorf(
 		"%w: Harness Agent %q does not match this CR's immutable tuple and %s tag; "+

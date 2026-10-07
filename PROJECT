@@ -3,19 +3,28 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.10.1
-domain: kandylis.co.uk
+domain: harness.io
 layout:
 - go.kubebuilder.io/v4
 projectName: harness-gitops-agent-operator
-repo: github.com/markoskandylis/harness-gitops-agent-operator
+repo: harness.io/harness-gitops-agent-operator
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: kandylis.co.uk
+  domain: harness.io
   group: infrastructure
   kind: HarnessGitopsAgent
-  path: github.com/markoskandylis/harness-gitops-agent-operator/api/v1
-  version: v1
+  path: harness.io/harness-gitops-agent-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: harness.io
+  group: infrastructure
+  kind: HarnessGitopsProjectMapping
+  path: harness.io/harness-gitops-agent-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

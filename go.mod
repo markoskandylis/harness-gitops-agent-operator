@@ -1,4 +1,4 @@
-module github.com/markoskandylis/harness-gitops-agent-operator
+module harness.io/harness-gitops-agent-operator
 
 go 1.25.0
 

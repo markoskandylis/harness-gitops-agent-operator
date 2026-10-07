@@ -7,7 +7,7 @@
 # one Harness project: GitOps entities in that AppProject surface in the
 # mapped project. On success the Mapping resource records its remote ID and
 # ownership under .status.remote.
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsAgent
 metadata:
   name: org-agent-mapped
@@ -23,7 +23,7 @@ spec:
   apiKeySecretRef: harness-api-key-secret
   tokenSecretRef: org-agent-mapped-token
 ---
-apiVersion: infrastructure.kandylis.co.uk/v1
+apiVersion: infrastructure.harness.io/v1alpha1
 kind: HarnessGitopsProjectMapping
 metadata:
   name: org-agent-default

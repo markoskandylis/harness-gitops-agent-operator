@@ -4,13 +4,13 @@ metadata:
   name: hga-mapping-plugin-probe
   namespace: controller-e2e
   labels:
-    infrastructure.kandylis.co.uk/test: plugin-probe
+    infrastructure.harness.io/test: plugin-probe
 spec:
   project: default
   source:
-    repoURL:  https:///github.com:markoskandylis/harness-gitops-agent-operator.git 
+    repoURL: https://git0.harness.io/l7B_kbSEQD2wjrM7PShm5w/PROD/Harness_Commons/harness-gitops-agent-operator.git
     targetRevision: HEAD
-    path: gitops/plugin-probe
+    path: test/e2e/gitops/plugin-probe
     plugin: {}
   destination:
     server: https://kubernetes.default.svc

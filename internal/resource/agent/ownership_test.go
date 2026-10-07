@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
 )
 
 type createConflictAgentAPI struct{}
@@ -75,9 +75,9 @@ func TestCreateHarnessAgentRequiresExplicitAdoption(t *testing.T) {
 }
 
 func TestDeletionSkipsAgentWithoutManagedOwnership(t *testing.T) {
-	for _, ownership := range []infrastructurev1.ResourceOwnership{
+	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
 		"",
-		infrastructurev1.OwnershipExternal,
+		infrastructurev1alpha1.OwnershipExternal,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			reconciler, agent := newAgentOwnershipTestReconciler(t, ownership)
@@ -91,7 +91,7 @@ func TestDeletionSkipsAgentWithoutManagedOwnership(t *testing.T) {
 				t.Fatalf("unowned agent finalization should not contact Harness: %v", err)
 			}
 
-			updated := &infrastructurev1.HarnessGitopsAgent{}
+			updated := &infrastructurev1alpha1.HarnessGitopsAgent{}
 			if err := reconciler.Get(
 				context.Background(),
 				client.ObjectKeyFromObject(agent),
@@ -111,7 +111,7 @@ func TestDeletionSkipsAgentWithoutManagedOwnership(t *testing.T) {
 func TestDeletionOfExternalAgentDoesNotRequireAPIKey(t *testing.T) {
 	reconciler, agent := newAgentOwnershipTestReconciler(
 		t,
-		infrastructurev1.OwnershipExternal,
+		infrastructurev1alpha1.OwnershipExternal,
 	)
 
 	if _, err := reconciler.reconcileDeletion(
@@ -123,7 +123,7 @@ func TestDeletionOfExternalAgentDoesNotRequireAPIKey(t *testing.T) {
 		t.Fatalf("external resources should finalize without an API key: %v", err)
 	}
 
-	updated := &infrastructurev1.HarnessGitopsAgent{}
+	updated := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := reconciler.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(agent),
@@ -155,7 +155,7 @@ func TestExistingAgentRecordsExternalOwnershipWithoutAPIKey(t *testing.T) {
 		t.Fatalf("existing agent should not require an API key: %v", err)
 	}
 
-	updated := &infrastructurev1.HarnessGitopsAgent{}
+	updated := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := reconciler.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(agent),
@@ -166,7 +166,7 @@ func TestExistingAgentRecordsExternalOwnershipWithoutAPIKey(t *testing.T) {
 	if updated.Status.AgentIdentifier != "existing-agent" {
 		t.Fatalf("agent identifier = %q, want existing-agent", updated.Status.AgentIdentifier)
 	}
-	if updated.Status.AgentOwnership != infrastructurev1.OwnershipExternal {
+	if updated.Status.AgentOwnership != infrastructurev1alpha1.OwnershipExternal {
 		t.Fatalf("agent ownership = %q, want External", updated.Status.AgentOwnership)
 	}
 }
@@ -174,7 +174,7 @@ func TestExistingAgentRecordsExternalOwnershipWithoutAPIKey(t *testing.T) {
 func TestDeletionRetainsFinalizerForManagedAgentWhenCleanupCannotStart(t *testing.T) {
 	reconciler, agent := newAgentOwnershipTestReconciler(
 		t,
-		infrastructurev1.OwnershipManaged,
+		infrastructurev1alpha1.OwnershipManaged,
 	)
 
 	if _, err := reconciler.reconcileDeletion(
@@ -186,7 +186,7 @@ func TestDeletionRetainsFinalizerForManagedAgentWhenCleanupCannotStart(t *testin
 		t.Fatal("managed-agent deletion should fail when the API key Secret is unavailable")
 	}
 
-	updated := &infrastructurev1.HarnessGitopsAgent{}
+	updated := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := reconciler.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(agent),
@@ -206,9 +206,9 @@ func TestDeletionRetainsFinalizerForManagedAgentWhenCleanupCannotStart(t *testin
 }
 
 func TestCredentialRecoveryRequiresManagedOwnership(t *testing.T) {
-	for _, ownership := range []infrastructurev1.ResourceOwnership{
+	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
 		"",
-		infrastructurev1.OwnershipExternal,
+		infrastructurev1alpha1.OwnershipExternal,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			reconciler, agent := newAgentOwnershipTestReconciler(t, ownership)
@@ -227,7 +227,7 @@ func TestCredentialRecoveryRequiresManagedOwnership(t *testing.T) {
 func TestCredentialRecoveryRemainsEnabledForManagedAgent(t *testing.T) {
 	reconciler, agent := newAgentOwnershipTestReconciler(
 		t,
-		infrastructurev1.OwnershipManaged,
+		infrastructurev1alpha1.OwnershipManaged,
 	)
 
 	_, err := reconciler.Reconcile(context.Background(), ctrlRequestFor(agent))
@@ -239,18 +239,18 @@ func TestCredentialRecoveryRemainsEnabledForManagedAgent(t *testing.T) {
 	}
 }
 
-func ctrlRequestFor(agent *infrastructurev1.HarnessGitopsAgent) ctrl.Request {
+func ctrlRequestFor(agent *infrastructurev1alpha1.HarnessGitopsAgent) ctrl.Request {
 	return ctrl.Request{NamespacedName: client.ObjectKeyFromObject(agent)}
 }
 
 func newAgentOwnershipTestReconciler(
 	t *testing.T,
-	ownership infrastructurev1.ResourceOwnership,
-) (*Reconciler, *infrastructurev1.HarnessGitopsAgent) {
+	ownership infrastructurev1alpha1.ResourceOwnership,
+) (*Reconciler, *infrastructurev1alpha1.HarnessGitopsAgent) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add HarnessGitopsAgent scheme: %v", err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -260,11 +260,11 @@ func newAgentOwnershipTestReconciler(
 	agent := newAgentOwnershipTestResource(ownership)
 	k8sClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).
+		WithStatusSubresource(&infrastructurev1alpha1.HarnessGitopsAgent{}).
 		WithObjects(agent).
 		Build()
 
-	fetched := &infrastructurev1.HarnessGitopsAgent{}
+	fetched := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := k8sClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(agent),
@@ -281,16 +281,16 @@ func newAgentOwnershipTestReconciler(
 }
 
 func newAgentOwnershipTestResource(
-	ownership infrastructurev1.ResourceOwnership,
-) *infrastructurev1.HarnessGitopsAgent {
-	return &infrastructurev1.HarnessGitopsAgent{
+	ownership infrastructurev1alpha1.ResourceOwnership,
+) *infrastructurev1alpha1.HarnessGitopsAgent {
+	return &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "ownership-test-agent",
 			Namespace:  "default",
 			UID:        "ownership-test-uid",
 			Finalizers: []string{harnessAgentFinalizer},
 		},
-		Spec: infrastructurev1.HarnessGitopsAgentSpec{
+		Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 			Name:            "ownership-test-agent",
 			Identifier:      "ownership_test_agent",
 			Operator:        "ARGO",
@@ -302,7 +302,7 @@ func newAgentOwnershipTestResource(
 			ApiKeySecretRef: "missing-api-key",
 			TokenSecretRef:  "agent-token",
 		},
-		Status: infrastructurev1.HarnessGitopsAgentStatus{
+		Status: infrastructurev1alpha1.HarnessGitopsAgentStatus{
 			AgentIdentifier: "ownership_test_agent",
 			AgentOwnership:  ownership,
 		},

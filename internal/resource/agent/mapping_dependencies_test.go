@@ -14,13 +14,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const (
 	agentDependencyNamespace = "agent-dependency-tests"
 	agentDependencyName      = "shared-agent"
-	projectMappingFinalizer  = "infrastructure.kandylis.co.uk/project-mapping-finalizer"
+	projectMappingFinalizer  = "infrastructure.harness.io/project-mapping-finalizer"
 )
 
 func TestAgentMappingDependenciesUseFreshReaderAndWait(t *testing.T) {
@@ -207,16 +207,16 @@ func TestAgentMappingDependenciesProceedWhenClear(t *testing.T) {
 func TestAgentDeletionWaitsForMappingsBeforeOwnershipDecision(t *testing.T) {
 	tests := []struct {
 		name          string
-		ownership     infrastructurev1.ResourceOwnership
+		ownership     infrastructurev1alpha1.ResourceOwnership
 		existingAgent string
 	}{
 		{
 			name:      "managed agent",
-			ownership: infrastructurev1.OwnershipManaged,
+			ownership: infrastructurev1alpha1.OwnershipManaged,
 		},
 		{
 			name:          "external agent",
-			ownership:     infrastructurev1.OwnershipExternal,
+			ownership:     infrastructurev1alpha1.OwnershipExternal,
 			existingAgent: "existing-agent",
 		},
 	}
@@ -273,7 +273,7 @@ type agentDependencyFixture struct {
 
 func newAgentDependencyFixture(
 	t *testing.T,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 	readerObjects []client.Object,
 	deleteErrors map[string]error,
 	statusErr error,
@@ -282,7 +282,7 @@ func newAgentDependencyFixture(
 	t.Helper()
 
 	scheme := runtime.NewScheme()
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add operator scheme: %v", err)
 	}
 
@@ -290,7 +290,7 @@ func newAgentDependencyFixture(
 	statusUpdates := 0
 	cachedClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).
+		WithStatusSubresource(&infrastructurev1alpha1.HarnessGitopsAgent{}).
 		WithObjects(agent).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Delete: func(
@@ -352,17 +352,17 @@ func newAgentDependencyFixture(
 
 func (f *agentDependencyFixture) getAgent(
 	t *testing.T,
-) *infrastructurev1.HarnessGitopsAgent {
+) *infrastructurev1alpha1.HarnessGitopsAgent {
 	t.Helper()
-	agent := &infrastructurev1.HarnessGitopsAgent{}
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 	if err := f.reconciler.Get(context.Background(), f.key, agent); err != nil {
 		t.Fatalf("get Agent: %v", err)
 	}
 	return agent
 }
 
-func newAgentDependencyTestAgent() *infrastructurev1.HarnessGitopsAgent {
-	return &infrastructurev1.HarnessGitopsAgent{
+func newAgentDependencyTestAgent() *infrastructurev1alpha1.HarnessGitopsAgent {
+	return &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       agentDependencyName,
 			Namespace:  agentDependencyNamespace,
@@ -377,14 +377,14 @@ func newAgentDependencyTestMapping(
 	namespace string,
 	agentName string,
 	deleting bool,
-) *infrastructurev1.HarnessGitopsProjectMapping {
-	mapping := &infrastructurev1.HarnessGitopsProjectMapping{
+) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+	mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: infrastructurev1.HarnessGitopsProjectMappingSpec{
-			AgentRef:   infrastructurev1.HarnessGitopsAgentReference{Name: agentName},
+		Spec: infrastructurev1alpha1.HarnessGitopsProjectMappingSpec{
+			AgentRef:   infrastructurev1alpha1.HarnessGitopsAgentReference{Name: agentName},
 			AppProject: "default",
 		},
 	}

@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: harnessgitopsagents.infrastructure.kandylis.co.uk
+  name: harnessgitopsagents.infrastructure.harness.io
 spec:
-  group: infrastructure.kandylis.co.uk
+  group: infrastructure.harness.io
   names:
     kind: HarnessGitopsAgent
     listKind: HarnessGitopsAgentList
@@ -20,7 +20,7 @@ spec:
     - jsonPath: .status.agentIdentifier
       name: Agent
       type: string
-    name: v1
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: HarnessGitopsAgent is the Schema for the harnessgitopsagents

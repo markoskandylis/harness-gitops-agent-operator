@@ -28,18 +28,18 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	agentcontroller "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource/agent"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	agentcontroller "harness.io/harness-gitops-agent-operator/internal/resource/agent"
 )
 
 var _ = Describe("HarnessGitopsAgent Controller", func() {
 	It("keeps remote agent identity immutable", func() {
-		resource := &infrastructurev1.HarnessGitopsAgent{
+		resource := &infrastructurev1alpha1.HarnessGitopsAgent{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "immutable-agent",
 				Namespace: "default",
 			},
-			Spec: infrastructurev1.HarnessGitopsAgentSpec{
+			Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 				Name:            "immutable-agent",
 				Identifier:      "immutable-agent",
 				Operator:        "ARGO",
@@ -54,7 +54,7 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 		DeferCleanup(func() {
-			current := &infrastructurev1.HarnessGitopsAgent{}
+			current := &infrastructurev1alpha1.HarnessGitopsAgent{}
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(resource), current); err == nil {
 				Expect(k8sClient.Delete(ctx, current)).To(Succeed())
 			}
@@ -78,18 +78,18 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		harnessgitopsagent := &infrastructurev1.HarnessGitopsAgent{}
+		harnessgitopsagent := &infrastructurev1alpha1.HarnessGitopsAgent{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind HarnessGitopsAgent")
 			err := k8sClient.Get(ctx, typeNamespacedName, harnessgitopsagent)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &infrastructurev1.HarnessGitopsAgent{
+				resource := &infrastructurev1alpha1.HarnessGitopsAgent{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					Spec: infrastructurev1.HarnessGitopsAgentSpec{
+					Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 						Name:            "test-agent",
 						Identifier:      "test-agent",
 						Operator:        "ARGO",
@@ -108,7 +108,7 @@ var _ = Describe("HarnessGitopsAgent Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &infrastructurev1.HarnessGitopsAgent{}
+			resource := &infrastructurev1alpha1.HarnessGitopsAgent{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

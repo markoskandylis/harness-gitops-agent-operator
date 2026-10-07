@@ -13,19 +13,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
-	harnessapi "github.com/markoskandylis/harness-gitops-agent-operator/internal/harness"
-	resourceutil "github.com/markoskandylis/harness-gitops-agent-operator/internal/resource"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
+	resourceutil "harness.io/harness-gitops-agent-operator/internal/resource"
 )
 
 const (
-	harnessAgentFinalizer               = "infrastructure.kandylis.co.uk/finalizer"
+	harnessAgentFinalizer               = "infrastructure.harness.io/finalizer"
 	agentMappingDependencyRetryInterval = 10 * time.Second
 )
 
 func (r *Reconciler) reconcileDeletion(
 	ctx context.Context,
-	agentCR *infrastructurev1.HarnessGitopsAgent,
+	agentCR *infrastructurev1alpha1.HarnessGitopsAgent,
 	existingAgentIdentifier string,
 	existingAgentMode bool,
 ) (ctrl.Result, error) {
@@ -48,7 +48,7 @@ func (r *Reconciler) reconcileDeletion(
 
 	var harnessSession *harnessapi.Session
 	deleteAuthorized := false
-	verifyOwnership := agentCR.Status.AgentOwnership == infrastructurev1.OwnershipManaged ||
+	verifyOwnership := agentCR.Status.AgentOwnership == infrastructurev1alpha1.OwnershipManaged ||
 		agentCreationIsUncertain(agentCR.Status.CreationState)
 	if verifyOwnership {
 		var err error
@@ -130,7 +130,7 @@ func (r *Reconciler) reconcileDeletion(
 // A true done result means the Agent deletion reconcile must return immediately.
 func (r *Reconciler) reconcileMappingDependenciesForDeletion(
 	ctx context.Context,
-	agent *infrastructurev1.HarnessGitopsAgent,
+	agent *infrastructurev1alpha1.HarnessGitopsAgent,
 ) (result ctrl.Result, done bool, err error) {
 	if r.APIReader == nil {
 		return ctrl.Result{}, true, fmt.Errorf(
@@ -140,7 +140,7 @@ func (r *Reconciler) reconcileMappingDependenciesForDeletion(
 		)
 	}
 
-	mappings := &infrastructurev1.HarnessGitopsProjectMappingList{}
+	mappings := &infrastructurev1alpha1.HarnessGitopsProjectMappingList{}
 	if err := r.APIReader.List(ctx, mappings, client.InNamespace(agent.Namespace)); err != nil {
 		return ctrl.Result{}, true, fmt.Errorf(
 			"list Mapping dependencies for Agent %s/%s: %w",
@@ -150,7 +150,7 @@ func (r *Reconciler) reconcileMappingDependenciesForDeletion(
 		)
 	}
 
-	references := make([]*infrastructurev1.HarnessGitopsProjectMapping, 0)
+	references := make([]*infrastructurev1alpha1.HarnessGitopsProjectMapping, 0)
 	for i := range mappings.Items {
 		mapping := &mappings.Items[i]
 		if strings.TrimSpace(mapping.Spec.AgentRef.Name) == agent.Name {

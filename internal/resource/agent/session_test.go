@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const (
@@ -90,13 +90,13 @@ func newAPIKeyNamespaceTestReader(
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 }
 
-func newAPIKeyNamespaceTestAgent() *infrastructurev1.HarnessGitopsAgent {
-	return &infrastructurev1.HarnessGitopsAgent{
+func newAPIKeyNamespaceTestAgent() *infrastructurev1alpha1.HarnessGitopsAgent {
+	return &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-agent",
 			Namespace: apiKeyTestAgentNamespace,
 		},
-		Spec: infrastructurev1.HarnessGitopsAgentSpec{
+		Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 			ApiKeySecretRef: apiKeyTestSecretName,
 		},
 	}

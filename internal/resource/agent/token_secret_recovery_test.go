@@ -11,25 +11,25 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	infrastructurev1 "github.com/markoskandylis/harness-gitops-agent-operator/api/v1"
+	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 	scheme := runtime.NewScheme()
-	if err := infrastructurev1.AddToScheme(scheme); err != nil {
+	if err := infrastructurev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add API scheme: %v", err)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core scheme: %v", err)
 	}
 
-	agent := &infrastructurev1.HarnessGitopsAgent{
+	agent := &infrastructurev1alpha1.HarnessGitopsAgent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       "project-agent-no-mapping",
 			Namespace:  "default",
 			Finalizers: []string{harnessAgentFinalizer},
 		},
-		Spec: infrastructurev1.HarnessGitopsAgentSpec{
+		Spec: infrastructurev1alpha1.HarnessGitopsAgentSpec{
 			Name:            "project-agent-no-mapping",
 			Identifier:      "project_agent_no_mapping",
 			Operator:        "ARGO",
@@ -41,7 +41,7 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 			ApiKeySecretRef: "intentionally-absent-api-key",
 			TokenSecretRef:  "project-agent-token",
 		},
-		Status: infrastructurev1.HarnessGitopsAgentStatus{
+		Status: infrastructurev1alpha1.HarnessGitopsAgentStatus{
 			AgentIdentifier: "project_agent_no_mapping",
 		},
 	}
@@ -56,7 +56,7 @@ func TestProjectScopedAgentWithoutMappingNeedsNoAppProject(t *testing.T) {
 	reconciler := &Reconciler{
 		Client: fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithStatusSubresource(&infrastructurev1.HarnessGitopsAgent{}).
+			WithStatusSubresource(&infrastructurev1alpha1.HarnessGitopsAgent{}).
 			WithObjects(agent, tokenSecret).
 			Build(),
 		Scheme: scheme,
