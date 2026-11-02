@@ -7,24 +7,15 @@ domain: harness.io
 layout:
 - go.kubebuilder.io/v4
 projectName: harness-gitops-agent-operator
-repo: harness.io/harness-gitops-agent-operator
+repo: github.com/harness/harness-gitops-agent-operator
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
   domain: harness.io
-  group: infrastructure
+  group: gitops
   kind: HarnessGitopsAgent
-  path: harness.io/harness-gitops-agent-operator/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: harness.io
-  group: infrastructure
-  kind: HarnessGitopsProjectMapping
-  path: harness.io/harness-gitops-agent-operator/api/v1alpha1
+  path: github.com/harness/harness-gitops-agent-operator/api/v1alpha1
   version: v1alpha1
 version: "3"

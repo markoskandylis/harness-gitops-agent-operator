@@ -1,5 +1,5 @@
 # Build the manager binary
-FROM golang:1.25.12 AS builder
+FROM golang:1.26.6 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -21,11 +21,27 @@ COPY . .
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.8
+
+USER root
+
+# Upgrade dependencies
+RUN microdnf update --nodocs --setopt=install_weak_deps=0 -y && \
+    microdnf clean all && \
+    rm -rf /tmp/* /var/tmp/*
+
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
+
+ARG VERSION
+
+LABEL name="harness/harness-gitops-agent-operator"
+LABEL vendor="Harness"
+LABEL maintainer="Harness"
+LABEL version=${VERSION}
+LABEL release=${VERSION}
+LABEL summary="Harness GitOps Agent Operator manages Harness GitOps agents and Project Mapping"
+LABEL description="The Harness GitOps Agent Operator automates the registration, deployment, and lifecycle management of Harness GitOps agents and the project mappings in Kubernetes environments."
 
 ENTRYPOINT ["/manager"]

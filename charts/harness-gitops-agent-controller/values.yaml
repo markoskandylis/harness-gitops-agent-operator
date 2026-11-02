@@ -5,8 +5,8 @@ replicaCount: 1
 revisionHistoryLimit: 5
 
 image:
-  repository: mkandylis/harness-gitops-agent-operator
-  tag: v0.6.0-alpha.1
+  repository: harness/gitops-agent-bootstrap-controller
+  tag: v0.1.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

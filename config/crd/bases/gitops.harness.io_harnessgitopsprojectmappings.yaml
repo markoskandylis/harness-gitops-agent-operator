@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: harnessgitopsprojectmappings.infrastructure.harness.io
+  name: harnessgitopsprojectmappings.gitops.harness.io
 spec:
-  group: infrastructure.harness.io
+  group: gitops.harness.io
   names:
     kind: HarnessGitopsProjectMapping
     listKind: HarnessGitopsProjectMappingList

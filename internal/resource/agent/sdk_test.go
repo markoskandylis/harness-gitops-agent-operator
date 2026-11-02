@@ -13,7 +13,7 @@ import (
 
 	"github.com/harness/harness-go-sdk/harness/nextgen"
 
-	harnessapi "harness.io/harness-gitops-agent-operator/internal/harness"
+	harnessapi "github.com/harness/harness-gitops-agent-operator/internal/harness"
 )
 
 func TestSDKAgentLookupUsesScopedPathCandidatesAndQueries(t *testing.T) {

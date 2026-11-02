@@ -12,20 +12,20 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["appprojects"]
     verbs: ["get"]
-  - apiGroups: ["infrastructure.harness.io"]
+  - apiGroups: ["gitops.harness.io"]
     resources: ["harnessgitopsagents"]
     verbs: ["get", "list", "patch", "update", "watch"]
-  - apiGroups: ["infrastructure.harness.io"]
+  - apiGroups: ["gitops.harness.io"]
     resources:
       - harnessgitopsagents/finalizers
       - harnessgitopsprojectmappings/finalizers
     verbs: ["update"]
-  - apiGroups: ["infrastructure.harness.io"]
+  - apiGroups: ["gitops.harness.io"]
     resources:
       - harnessgitopsagents/status
       - harnessgitopsprojectmappings/status
     verbs: ["get", "patch", "update"]
-  - apiGroups: ["infrastructure.harness.io"]
+  - apiGroups: ["gitops.harness.io"]
     resources: ["harnessgitopsprojectmappings"]
     verbs: ["delete", "get", "list", "patch", "update", "watch"]
 {{- end }}

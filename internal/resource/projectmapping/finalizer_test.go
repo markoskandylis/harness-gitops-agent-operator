@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	gitopsv1alpha1 "github.com/harness/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const mappingCleanupID = "mapping-cleanup-id"
@@ -32,9 +32,9 @@ func TestProjectMappingFinalizerFastPathsDoNotContactHarness(t *testing.T) {
 		assertMappingCleanupCalls(t, fixture.mappingAPI, 0, 0)
 	})
 
-	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
+	for _, ownership := range []gitopsv1alpha1.ResourceOwnership{
 		"",
-		infrastructurev1alpha1.OwnershipExternal,
+		gitopsv1alpha1.OwnershipExternal,
 	} {
 		name := "empty ownership"
 		if ownership != "" {
@@ -63,16 +63,16 @@ func TestProjectMappingFinalizerFastPathsDoNotContactHarness(t *testing.T) {
 
 func TestProjectMappingFinalizerBlocksUncertainCreates(t *testing.T) {
 	tests := []struct {
-		state     infrastructurev1alpha1.MappingCreationState
-		ownership infrastructurev1alpha1.ResourceOwnership
+		state     gitopsv1alpha1.MappingCreationState
+		ownership gitopsv1alpha1.ResourceOwnership
 	}{
 		{
-			state:     infrastructurev1alpha1.MappingCreationPending,
-			ownership: infrastructurev1alpha1.OwnershipExternal,
+			state:     gitopsv1alpha1.MappingCreationPending,
+			ownership: gitopsv1alpha1.OwnershipExternal,
 		},
 		{
-			state:     infrastructurev1alpha1.MappingCreationOutcomeUnknown,
-			ownership: infrastructurev1alpha1.OwnershipManaged,
+			state:     gitopsv1alpha1.MappingCreationOutcomeUnknown,
+			ownership: gitopsv1alpha1.OwnershipManaged,
 		},
 	}
 
@@ -81,7 +81,7 @@ func TestProjectMappingFinalizerBlocksUncertainCreates(t *testing.T) {
 			agent := newMappingControllerAgent(agentScopeAccount)
 			mapping, _ := newOwnedDeletingMapping(t, agent, test.ownership)
 			mapping.Status.CreationState = test.state
-			if test.state == infrastructurev1alpha1.MappingCreationPending {
+			if test.state == gitopsv1alpha1.MappingCreationPending {
 				mapping.Status.Remote.MappingID = ""
 			}
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
@@ -110,7 +110,7 @@ func TestProjectMappingFinalizerRecoversPendingReturnedIDBeforeDeleting(t *testi
 	mapping, request := newUncertainDeletingMapping(
 		t,
 		agent,
-		infrastructurev1alpha1.MappingCreationPending,
+		gitopsv1alpha1.MappingCreationPending,
 		mappingCleanupID,
 		"",
 	)
@@ -131,7 +131,7 @@ func TestProjectMappingFinalizerRecoversPendingReturnedIDBeforeDeleting(t *testi
 	if current.Status.CreationState != "" ||
 		current.Status.Remote == nil ||
 		current.Status.Remote.MappingID != mappingCleanupID ||
-		current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipManaged {
+		current.Status.Remote.Ownership != gitopsv1alpha1.OwnershipManaged {
 		t.Fatalf("recovered status = %#v, want Managed mapping %q", current.Status, mappingCleanupID)
 	}
 	assertMappingCleanupCalls(t, fixture.mappingAPI, 1, 0)
@@ -148,7 +148,7 @@ func TestProjectMappingFinalizerRemovesWhenPendingReturnedIDIsAbsent(t *testing.
 	mapping, _ := newUncertainDeletingMapping(
 		t,
 		agent,
-		infrastructurev1alpha1.MappingCreationPending,
+		gitopsv1alpha1.MappingCreationPending,
 		mappingCleanupID,
 		"",
 	)
@@ -171,7 +171,7 @@ func TestProjectMappingFinalizerWaitsForPendingCreateVisibility(t *testing.T) {
 	mapping, request := newUncertainDeletingMapping(
 		t,
 		agent,
-		infrastructurev1alpha1.MappingCreationPending,
+		gitopsv1alpha1.MappingCreationPending,
 		mappingCleanupID,
 		"",
 	)
@@ -213,7 +213,7 @@ func TestProjectMappingFinalizerWaitsForPendingCreateVisibility(t *testing.T) {
 	current := fixture.getMapping(t)
 	if current.Status.CreationState != "" ||
 		current.Status.Remote == nil ||
-		current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipManaged {
+		current.Status.Remote.Ownership != gitopsv1alpha1.OwnershipManaged {
 		t.Fatalf("recovered status = %#v, want Managed", current.Status)
 	}
 	assertMappingFinalizer(t, fixture, true)
@@ -229,17 +229,17 @@ func TestProjectMappingFinalizerWaitsForPendingCreateVisibility(t *testing.T) {
 func TestProjectMappingFinalizerRecoversExactAdoptionBeforeDeleting(t *testing.T) {
 	tests := []struct {
 		name       string
-		state      infrastructurev1alpha1.MappingCreationState
+		state      gitopsv1alpha1.MappingCreationState
 		remembered string
 	}{
 		{
 			name:       "Pending",
-			state:      infrastructurev1alpha1.MappingCreationPending,
+			state:      gitopsv1alpha1.MappingCreationPending,
 			remembered: mappingCleanupID,
 		},
 		{
 			name:  "OutcomeUnknown",
-			state: infrastructurev1alpha1.MappingCreationOutcomeUnknown,
+			state: gitopsv1alpha1.MappingCreationOutcomeUnknown,
 		},
 	}
 
@@ -274,7 +274,7 @@ func TestProjectMappingFinalizerRecoversExactAdoptionBeforeDeleting(t *testing.T
 			if current.Status.CreationState != "" ||
 				current.Status.Remote == nil ||
 				current.Status.Remote.MappingID != mappingCleanupID ||
-				current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
+				current.Status.Remote.Ownership != gitopsv1alpha1.OwnershipAdopted {
 				t.Fatalf("recovered status = %#v, want Adopted mapping %q", current.Status, mappingCleanupID)
 			}
 			assertMappingCleanupCalls(t, fixture.mappingAPI, 1, 0)
@@ -293,7 +293,7 @@ func TestProjectMappingFinalizerDifferentReturnedCandidateStaysBlockedAndCorrect
 	mapping, request := newUncertainDeletingMapping(
 		t,
 		agent,
-		infrastructurev1alpha1.MappingCreationPending,
+		gitopsv1alpha1.MappingCreationPending,
 		mappingCleanupID,
 		"wrong-mapping-id",
 	)
@@ -334,7 +334,7 @@ func TestProjectMappingFinalizerDifferentReturnedCandidateStaysBlockedAndCorrect
 	current = fixture.getMapping(t)
 	if current.Status.CreationState != "" ||
 		current.Status.Remote == nil ||
-		current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
+		current.Status.Remote.Ownership != gitopsv1alpha1.OwnershipAdopted {
 		t.Fatalf("corrected adoption status = %#v", current.Status)
 	}
 	assertMappingFinalizer(t, fixture, true)
@@ -381,7 +381,7 @@ func TestProjectMappingFinalizerAdoptionRequiresExactIDAndTuple(t *testing.T) {
 			mapping, request := newUncertainDeletingMapping(
 				t,
 				agent,
-				infrastructurev1alpha1.MappingCreationOutcomeUnknown,
+				gitopsv1alpha1.MappingCreationOutcomeUnknown,
 				"",
 				test.adoptID,
 			)
@@ -429,7 +429,7 @@ func TestProjectMappingFinalizerAdoptionRequiresExactIDAndTuple(t *testing.T) {
 			current := fixture.getMapping(t)
 			if current.Status.CreationState != "" ||
 				current.Status.Remote == nil ||
-				current.Status.Remote.Ownership != infrastructurev1alpha1.OwnershipAdopted {
+				current.Status.Remote.Ownership != gitopsv1alpha1.OwnershipAdopted {
 				t.Fatalf("corrected adoption status = %#v", current.Status)
 			}
 			assertMappingFinalizer(t, fixture, true)
@@ -444,7 +444,7 @@ func TestProjectMappingFinalizerRetainsUncertainMappingOnRecoveryFailure(t *test
 		mapping, _ := newUncertainDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.MappingCreationPending,
+			gitopsv1alpha1.MappingCreationPending,
 			mappingCleanupID,
 			"",
 		)
@@ -469,7 +469,7 @@ func TestProjectMappingFinalizerRetainsUncertainMappingOnRecoveryFailure(t *test
 		mapping, request := newUncertainDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.MappingCreationOutcomeUnknown,
+			gitopsv1alpha1.MappingCreationOutcomeUnknown,
 			"",
 			mappingCleanupID,
 		)
@@ -485,7 +485,7 @@ func TestProjectMappingFinalizerRetainsUncertainMappingOnRecoveryFailure(t *test
 		}
 		assertMappingFinalizer(t, fixture, true)
 		current := fixture.getMapping(t)
-		if current.Status.CreationState != infrastructurev1alpha1.MappingCreationOutcomeUnknown ||
+		if current.Status.CreationState != gitopsv1alpha1.MappingCreationOutcomeUnknown ||
 			current.Status.Remote == nil ||
 			current.Status.Remote.Ownership != "" {
 			t.Fatalf("uncertain status was not retained: %#v", current.Status)
@@ -495,9 +495,9 @@ func TestProjectMappingFinalizerRetainsUncertainMappingOnRecoveryFailure(t *test
 }
 
 func TestProjectMappingFinalizerDeletesManagedAndAdoptedMappings(t *testing.T) {
-	for _, ownership := range []infrastructurev1alpha1.ResourceOwnership{
-		infrastructurev1alpha1.OwnershipManaged,
-		infrastructurev1alpha1.OwnershipAdopted,
+	for _, ownership := range []gitopsv1alpha1.ResourceOwnership{
+		gitopsv1alpha1.OwnershipManaged,
+		gitopsv1alpha1.OwnershipAdopted,
 	} {
 		t.Run(string(ownership), func(t *testing.T) {
 			agent := newMappingControllerAgent(agentScopeAccount)
@@ -512,7 +512,7 @@ func TestProjectMappingFinalizerDeletesManagedAndAdoptedMappings(t *testing.T) {
 			agent.Status.AgentIdentifier = "current-agent-must-not-be-used"
 			now := metav1.NewTime(time.Now())
 			agent.DeletionTimestamp = &now
-			agent.Finalizers = []string{"tests.infrastructure.harness.io/agent"}
+			agent.Finalizers = []string{"tests.gitops.harness.io/agent"}
 
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 			fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -548,14 +548,14 @@ func TestProjectMappingFinalizerDeletesManagedAndAdoptedMappings(t *testing.T) {
 func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 	for _, test := range []struct {
 		name              string
-		removeCredentials func(*testing.T, *mappingReconcilerFixture, *infrastructurev1alpha1.HarnessGitopsAgent)
+		removeCredentials func(*testing.T, *mappingReconcilerFixture, *gitopsv1alpha1.HarnessGitopsAgent)
 	}{
 		{
 			name: "loser without its Agent",
 			removeCredentials: func(
 				t *testing.T,
 				fixture *mappingReconcilerFixture,
-				agent *infrastructurev1alpha1.HarnessGitopsAgent,
+				agent *gitopsv1alpha1.HarnessGitopsAgent,
 			) {
 				deleteFixtureObject(t, fixture, agent)
 			},
@@ -565,7 +565,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			removeCredentials: func(
 				t *testing.T,
 				fixture *mappingReconcilerFixture,
-				_ *infrastructurev1alpha1.HarnessGitopsAgent,
+				_ *gitopsv1alpha1.HarnessGitopsAgent,
 			) {
 				deleteFixtureObject(t, fixture, &corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
@@ -581,14 +581,14 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			mapping, request := newOwnedDeletingMapping(
 				t,
 				agent,
-				infrastructurev1alpha1.OwnershipAdopted,
+				gitopsv1alpha1.OwnershipAdopted,
 			)
 			winner := duplicateMappingClaim(
 				t,
 				"a-winning-namespace",
 				"winner",
 				request,
-				infrastructurev1alpha1.OwnershipManaged,
+				gitopsv1alpha1.OwnershipManaged,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false, winner)
 			test.removeCredentials(t, fixture, agent)
@@ -606,14 +606,14 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		mapping, request := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipAdopted,
+			gitopsv1alpha1.OwnershipAdopted,
 		)
 		winner := duplicateMappingClaim(
 			t,
 			"a-winning-namespace",
 			"winner",
 			request,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, winner)
 		fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -636,14 +636,14 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		mapping, request := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		loser := duplicateMappingClaim(
 			t,
 			"z-losing-namespace",
 			"loser",
 			request,
-			infrastructurev1alpha1.OwnershipAdopted,
+			gitopsv1alpha1.OwnershipAdopted,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, loser)
 		fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -665,28 +665,28 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		name    string
 		current func(
 			*testing.T,
-			*infrastructurev1alpha1.HarnessGitopsAgent,
-		) (*infrastructurev1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest)
+			*gitopsv1alpha1.HarnessGitopsAgent,
+		) (*gitopsv1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest)
 	}{
 		{
 			name: "managed delete",
 			current: func(
 				t *testing.T,
-				agent *infrastructurev1alpha1.HarnessGitopsAgent,
-			) (*infrastructurev1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
-				return newOwnedDeletingMapping(t, agent, infrastructurev1alpha1.OwnershipManaged)
+				agent *gitopsv1alpha1.HarnessGitopsAgent,
+			) (*gitopsv1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
+				return newOwnedDeletingMapping(t, agent, gitopsv1alpha1.OwnershipManaged)
 			},
 		},
 		{
 			name: "uncertain adoption recovery",
 			current: func(
 				t *testing.T,
-				agent *infrastructurev1alpha1.HarnessGitopsAgent,
-			) (*infrastructurev1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
+				agent *gitopsv1alpha1.HarnessGitopsAgent,
+			) (*gitopsv1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 				return newUncertainDeletingMapping(
 					t,
 					agent,
-					infrastructurev1alpha1.MappingCreationOutcomeUnknown,
+					gitopsv1alpha1.MappingCreationOutcomeUnknown,
 					"",
 					mappingCleanupID,
 				)
@@ -701,7 +701,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 				"a-winning-namespace",
 				"winner",
 				request,
-				infrastructurev1alpha1.OwnershipManaged,
+				gitopsv1alpha1.OwnershipManaged,
 			)
 			fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 			fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -736,7 +736,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		mapping, request := newUncertainDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.MappingCreationOutcomeUnknown,
+			gitopsv1alpha1.MappingCreationOutcomeUnknown,
 			"",
 			mappingCleanupID,
 		)
@@ -745,7 +745,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 			"a-winning-namespace",
 			"winner",
 			request,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false, winner)
 		fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -774,7 +774,7 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 		mapping, request := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		claimErr := errors.New("claim list unavailable")
@@ -807,18 +807,18 @@ func TestProjectMappingFinalizerArbitratesDuplicateClaims(t *testing.T) {
 func TestProjectMappingCleanupRequestPreservesEveryScope(t *testing.T) {
 	tests := []struct {
 		scope        string
-		configureMap func(*infrastructurev1alpha1.HarnessGitopsProjectMapping)
+		configureMap func(*gitopsv1alpha1.HarnessGitopsProjectMapping)
 	}{
 		{scope: agentScopeProject},
 		{
 			scope: agentScopeOrg,
-			configureMap: func(mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
+			configureMap: func(mapping *gitopsv1alpha1.HarnessGitopsProjectMapping) {
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 			},
 		},
 		{
 			scope: agentScopeAccount,
-			configureMap: func(mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping) {
+			configureMap: func(mapping *gitopsv1alpha1.HarnessGitopsProjectMapping) {
 				mapping.Spec.OrgID = mappingControllerTargetOrgID
 				mapping.Spec.ProjectID = mappingControllerTargetProject
 				mapping.Spec.AutoCreateServiceEnv = true
@@ -836,7 +836,7 @@ func TestProjectMappingCleanupRequestPreservesEveryScope(t *testing.T) {
 			want := resolvedRequestForTest(t, agent, mapping)
 			remote := remoteStatusForRequest(want)
 			remote.MappingID = mappingCleanupID
-			remote.Ownership = infrastructurev1alpha1.OwnershipManaged
+			remote.Ownership = gitopsv1alpha1.OwnershipManaged
 
 			got, gotID, err := projectMappingCleanupRequest(remote)
 			if err != nil {
@@ -858,7 +858,7 @@ func TestProjectMappingFinalizerRequiresStoredIDAndFullTuple(t *testing.T) {
 		mapping, request := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -920,7 +920,7 @@ func TestProjectMappingFinalizerRequiresStoredIDAndFullTuple(t *testing.T) {
 			mapping, request := newOwnedDeletingMapping(
 				t,
 				agent,
-				infrastructurev1alpha1.OwnershipAdopted,
+				gitopsv1alpha1.OwnershipAdopted,
 			)
 			observed := exactMappingForRequest(
 				request,
@@ -946,7 +946,7 @@ func TestProjectMappingFinalizerRetainsOnTransientHarnessFailure(t *testing.T) {
 		mapping, _ := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		fixture.mappingAPI.listErr = errors.New("temporary list failure")
@@ -969,7 +969,7 @@ func TestProjectMappingFinalizerRetainsOnTransientHarnessFailure(t *testing.T) {
 		mapping, request := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		fixture.mappingAPI.listResults = [][]ProjectMapping{{
@@ -1003,7 +1003,7 @@ func TestProjectMappingFinalizerBlocksWithoutCleanupCredentials(t *testing.T) {
 		mapping, _ := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		deleteFixtureObject(t, fixture, agent)
@@ -1026,7 +1026,7 @@ func TestProjectMappingFinalizerBlocksWithoutCleanupCredentials(t *testing.T) {
 		mapping, _ := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipAdopted,
+			gitopsv1alpha1.OwnershipAdopted,
 		)
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
 		deleteFixtureObject(t, fixture, &corev1.Secret{
@@ -1054,7 +1054,7 @@ func TestProjectMappingFinalizerBlocksWithoutCleanupCredentials(t *testing.T) {
 		mapping, _ := newOwnedDeletingMapping(
 			t,
 			agent,
-			infrastructurev1alpha1.OwnershipManaged,
+			gitopsv1alpha1.OwnershipManaged,
 		)
 		mapping.Status.Remote.MappingID = ""
 		fixture := newMappingReconcilerFixture(t, agent, mapping, false)
@@ -1073,7 +1073,7 @@ func TestProjectMappingFinalizerBlocksWithoutCleanupCredentials(t *testing.T) {
 	})
 }
 
-func newDeletingMapping() *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+func newDeletingMapping() *gitopsv1alpha1.HarnessGitopsProjectMapping {
 	mapping := newMappingControllerResource()
 	now := metav1.NewTime(time.Now())
 	mapping.DeletionTimestamp = &now
@@ -1083,9 +1083,9 @@ func newDeletingMapping() *infrastructurev1alpha1.HarnessGitopsProjectMapping {
 
 func newOwnedDeletingMapping(
 	t *testing.T,
-	agent *infrastructurev1alpha1.HarnessGitopsAgent,
-	ownership infrastructurev1alpha1.ResourceOwnership,
-) (*infrastructurev1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
+	agent *gitopsv1alpha1.HarnessGitopsAgent,
+	ownership gitopsv1alpha1.ResourceOwnership,
+) (*gitopsv1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 	t.Helper()
 	mapping := newDeletingMapping()
 	switch agent.Spec.Scope {
@@ -1105,11 +1105,11 @@ func newOwnedDeletingMapping(
 
 func newUncertainDeletingMapping(
 	t *testing.T,
-	agent *infrastructurev1alpha1.HarnessGitopsAgent,
-	state infrastructurev1alpha1.MappingCreationState,
+	agent *gitopsv1alpha1.HarnessGitopsAgent,
+	state gitopsv1alpha1.MappingCreationState,
 	rememberedID string,
 	adoptID string,
-) (*infrastructurev1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
+) (*gitopsv1alpha1.HarnessGitopsProjectMapping, ProjectMappingRequest) {
 	t.Helper()
 	mapping, request := newOwnedDeletingMapping(t, agent, "")
 	mapping.Status.CreationState = state
@@ -1124,8 +1124,8 @@ func duplicateMappingClaim(
 	namespace string,
 	name string,
 	request ProjectMappingRequest,
-	ownership infrastructurev1alpha1.ResourceOwnership,
-) *infrastructurev1alpha1.HarnessGitopsProjectMapping {
+	ownership gitopsv1alpha1.ResourceOwnership,
+) *gitopsv1alpha1.HarnessGitopsProjectMapping {
 	t.Helper()
 	mapping := newMappingControllerResource()
 	mapping.Namespace = namespace
@@ -1142,14 +1142,14 @@ func duplicateMappingClaim(
 func persistDuplicateMappingClaim(
 	t *testing.T,
 	fixture *mappingReconcilerFixture,
-	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
+	mapping *gitopsv1alpha1.HarnessGitopsProjectMapping,
 ) {
 	t.Helper()
 	status := mapping.Status.DeepCopy()
 	if err := fixture.reconciler.Create(context.Background(), mapping); err != nil {
 		t.Fatalf("create duplicate claim: %v", err)
 	}
-	current := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
+	current := &gitopsv1alpha1.HarnessGitopsProjectMapping{}
 	if err := fixture.reconciler.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(mapping),
@@ -1180,7 +1180,7 @@ func assertMappingFinalizer(
 	want bool,
 ) {
 	t.Helper()
-	mapping := &infrastructurev1alpha1.HarnessGitopsProjectMapping{}
+	mapping := &gitopsv1alpha1.HarnessGitopsProjectMapping{}
 	err := fixture.reconciler.Get(context.Background(), fixture.key, mapping)
 	if k8serrors.IsNotFound(err) {
 		if want {

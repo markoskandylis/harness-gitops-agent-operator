@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"harness.io/harness-gitops-agent-operator/test/utils"
+	"github.com/harness/harness-gitops-agent-operator/test/utils"
 )
 
 const bootstrapChartPath = "charts/harness-gitops-agent-bootstrap"

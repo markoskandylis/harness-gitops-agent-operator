@@ -5,7 +5,7 @@
 # placeholder before applying.
 #
 # Note: ORG scope omits spec.projectId — the agent lives at organization level.
-apiVersion: infrastructure.harness.io/v1alpha1
+apiVersion: gitops.harness.io/v1alpha1
 kind: HarnessGitopsAgent
 metadata:
   name: org-agent

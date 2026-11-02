@@ -1,4 +1,4 @@
-apiVersion: infrastructure.harness.io/v1alpha1
+apiVersion: gitops.harness.io/v1alpha1
 kind: HarnessGitopsAgent
 metadata:
   labels:

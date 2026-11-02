@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
+	gitopsv1alpha1 "github.com/harness/harness-gitops-agent-operator/api/v1alpha1"
 )
 
 const (
@@ -16,8 +16,8 @@ const (
 // resolveProjectMappingRequest resolves the Agent lookup scope and mapped
 // project scope without contacting Harness.
 func resolveProjectMappingRequest(
-	agent *infrastructurev1alpha1.HarnessGitopsAgent,
-	mapping *infrastructurev1alpha1.HarnessGitopsProjectMapping,
+	agent *gitopsv1alpha1.HarnessGitopsAgent,
+	mapping *gitopsv1alpha1.HarnessGitopsProjectMapping,
 ) (ProjectMappingRequest, error) {
 	if agent == nil {
 		return ProjectMappingRequest{}, fmt.Errorf("referenced HarnessGitopsAgent is nil")

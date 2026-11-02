@@ -8,9 +8,9 @@ metadata:
     {{- if .Values.crds.keep }}
     helm.sh/resource-policy: keep
     {{- end }}
-  name: harnessgitopsagents.infrastructure.harness.io
+  name: harnessgitopsagents.gitops.harness.io
 spec:
-  group: infrastructure.harness.io
+  group: gitops.harness.io
   names:
     kind: HarnessGitopsAgent
     listKind: HarnessGitopsAgentList

@@ -24,7 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"harness.io/harness-gitops-agent-operator/internal/controller"
+	"github.com/harness/harness-gitops-agent-operator/internal/controller"
 )
 
 var _ = Describe("Manager setup", func() {

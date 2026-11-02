@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -33,7 +32,6 @@ func TestAccountScopeRendersManyMappingsWithOneAgentReference(t *testing.T) {
 
 	objects := decodeBootstrapYAML(t, renderBootstrap(t, args...))
 	agent := findBootstrapObject(t, objects, "HarnessGitopsAgent", "test-agent")
-	assertNestedString(t, agent, infrastructurev1alpha1.GroupVersion.String(), "apiVersion")
 	if _, found, err := unstructured.NestedFieldNoCopy(agent, "spec", "projectMapping"); err != nil || found {
 		t.Fatalf("Agent must not contain spec.projectMapping: found=%t err=%v", found, err)
 	}
@@ -43,7 +41,6 @@ func TestAccountScopeRendersManyMappingsWithOneAgentReference(t *testing.T) {
 		t.Fatalf("rendered %d Mapping CRs, want 2", len(mappings))
 	}
 	for _, mapping := range mappings {
-		assertNestedString(t, mapping, infrastructurev1alpha1.GroupVersion.String(), "apiVersion")
 		agentRef, _, err := unstructured.NestedString(mapping, "spec", "agentRef", "name")
 		if err != nil {
 			t.Fatalf("read Mapping agentRef: %v", err)

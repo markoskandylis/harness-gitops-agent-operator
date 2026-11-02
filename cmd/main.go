@@ -40,8 +40,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	infrastructurev1alpha1 "harness.io/harness-gitops-agent-operator/api/v1alpha1"
-	"harness.io/harness-gitops-agent-operator/internal/controller"
+	gitopsv1alpha1 "github.com/harness/harness-gitops-agent-operator/api/v1alpha1"
+	"github.com/harness/harness-gitops-agent-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -53,7 +53,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(infrastructurev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(gitopsv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

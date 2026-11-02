@@ -1,3 +1,8 @@
+# VERSION defines the project version, injected into the image as a build-arg
+# and surfaced via the Dockerfile's version/release labels. Override on the
+# command line or via the environment (e.g. make docker-buildx VERSION=1.2.3).
+VERSION ?= 0.0.1
+
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 
@@ -65,7 +70,7 @@ TEST_ARGS ?=
 
 .PHONY: test
 test: manifests generate fmt-check vet setup-envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $(TEST_ARGS) $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $(TEST_ARGS) $$(go list ./... | grep -v /e2e) -coverprofile=coverage.out
 
 .PHONY: test-e2e
 test-e2e: manifests generate fmt-check vet ## Run Helm chart lifecycle tests on the pipeline-provisioned cluster.
@@ -106,7 +111,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg=VERSION=$(VERSION) -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -125,7 +130,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
 	- $(CONTAINER_TOOL) buildx create --name harness-gitops-agent-operator-builder
 	$(CONTAINER_TOOL) buildx use harness-gitops-agent-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
+	$(CONTAINER_TOOL) buildx build --build-arg=VERSION=$(VERSION) --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
 	- $(CONTAINER_TOOL) buildx rm harness-gitops-agent-operator-builder
 	rm Dockerfile.cross
 
