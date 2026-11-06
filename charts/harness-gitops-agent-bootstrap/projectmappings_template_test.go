@@ -218,9 +218,33 @@ func TestAppProjectCannotRenderOutsideTheAgentNamespace(t *testing.T) {
 	if err == nil {
 		t.Fatal("AppProject namespace override was accepted")
 	}
-	if !strings.Contains(string(output), "additional properties 'namespace' not allowed") {
-		t.Fatalf("unexpected AppProject namespace validation error:\n%s", output)
+	version, major := bootstrapHelmMajorVersion(t)
+	var expected string
+	switch major {
+	case "3":
+		expected = "Additional property namespace is not allowed"
+	case "4":
+		expected = "additional properties 'namespace' not allowed"
+	default:
+		t.Fatalf("unsupported Helm version %s for schema error assertion", version)
 	}
+	if !strings.Contains(string(output), expected) {
+		t.Fatalf("unexpected AppProject namespace validation error for Helm %s (want %q):\n%s", version, expected, output)
+	}
+}
+
+// bootstrapHelmMajorVersion returns the installed Helm version (for example
+// "v3.16.2") and its major component. Helm 3 and Helm 4 use different JSON
+// schema validators, so values-schema error wording depends on the major version.
+func bootstrapHelmMajorVersion(t *testing.T) (string, string) {
+	t.Helper()
+	output, err := exec.Command("helm", "version", "--template", "{{.Version}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm version failed: %v\n%s", err, output)
+	}
+	version := strings.TrimSpace(string(output))
+	major, _, _ := strings.Cut(strings.TrimPrefix(version, "v"), ".")
+	return version, major
 }
 
 func TestDefaultFlowRendersAgentAndRuntimeTogether(t *testing.T) {

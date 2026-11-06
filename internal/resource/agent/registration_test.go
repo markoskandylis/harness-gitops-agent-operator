@@ -622,6 +622,83 @@ func TestManagedAgentDeletionReverifiesUIDTaggedTuple(t *testing.T) {
 	}
 }
 
+// TestManagedAgentDeletionHandlesHarnessDeleteFailure covers what happens after
+// ownership is proven and the Harness Delete call itself fails. A transient
+// failure must keep the finalizer so the agent is not orphaned in Harness; a
+// not-found answer means the agent is already gone, so cleanup may finish.
+func TestManagedAgentDeletionHandlesHarnessDeleteFailure(t *testing.T) {
+	transientErr := errors.New("harness returned 500 during agent delete")
+
+	tests := []struct {
+		name          string
+		deleteErr     error
+		wantErr       error
+		wantFinalizer bool
+	}{
+		{
+			name:          "transient delete failure retains finalizer",
+			deleteErr:     transientErr,
+			wantErr:       transientErr,
+			wantFinalizer: true,
+		},
+		{
+			name: "already absent agent releases finalizer",
+			deleteErr: fmt.Errorf(
+				"%w: %s",
+				ErrAgentNotFound,
+				"agent-identifier-711",
+			),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAgentRegistrationFixture(t, "PROJECT", nil)
+			fixture.agent.Status.AgentIdentifier = fixture.agent.Spec.Identifier
+			fixture.agent.Status.AgentOwnership = gitopsv1alpha1.OwnershipManaged
+			if err := fixture.reconciler.Status().Update(
+				context.Background(),
+				fixture.agent,
+			); err != nil {
+				t.Fatalf("persist managed status: %v", err)
+			}
+			fixture.agentAPI.lookupResult = AgentLookupResult{
+				Exists: true,
+				Agent:  ownedAgentObservation(fixture.agent),
+			}
+			fixture.agentAPI.deleteErr = test.deleteErr
+
+			_, err := fixture.reconciler.reconcileDeletion(
+				context.Background(),
+				fixture.agent,
+				"",
+				false,
+			)
+			if test.wantErr == nil && err != nil {
+				t.Fatalf("delete error = %v, want nil", err)
+			}
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Fatalf("delete error = %v, want %v", err, test.wantErr)
+			}
+			if fixture.agentAPI.deleteCalls != 1 {
+				t.Fatalf("delete calls = %d, want 1", fixture.agentAPI.deleteCalls)
+			}
+			if got := fixture.agentAPI.lastDelete.Identifier; got != fixture.agent.Spec.Identifier {
+				t.Fatalf("deleted identifier = %q, want %q", got, fixture.agent.Spec.Identifier)
+			}
+
+			persisted := fixture.getAgent(t)
+			hasFinalizer := false
+			for _, finalizer := range persisted.Finalizers {
+				hasFinalizer = hasFinalizer || finalizer == harnessAgentFinalizer
+			}
+			if hasFinalizer != test.wantFinalizer {
+				t.Fatalf("has finalizer = %t, want %t", hasFinalizer, test.wantFinalizer)
+			}
+		})
+	}
+}
+
 func TestAgentRegistrationScopeTuplesUseDistinctIdentifiers(t *testing.T) {
 	tests := []struct {
 		scope     string
